@@ -9,11 +9,16 @@ def test_check_model_status_real():
 
 def test_check_model_status_cached():
     with patch("relictoepub.ui.components.try_to_load_from_cache") as mock_load:
-        mock_load.return_value = "/path/to/cached/config.json"
+        def side_effect(model_id, filename):
+            if filename == "config.json":
+                return "/path/to/cached/config.json"
+            if filename == "model.safetensors":
+                return "/path/to/cached/model.safetensors"
+            return None
+        mock_load.side_effect = side_effect
         is_ok, status_str = check_model_status("baidu/Unlimited-OCR")
         assert is_ok is True
         assert "🟢 **Modello rilevato localmente**" in status_str
-        mock_load.assert_called_once_with("baidu/Unlimited-OCR", "config.json")
 
 def test_check_model_status_not_cached():
     with patch("relictoepub.ui.components.try_to_load_from_cache") as mock_load:
@@ -166,3 +171,45 @@ def test_run_pipeline_yields_four_values():
                     
                 # Verify that the last yield has the check_model_status message as the 4th element
                 assert results[-1][3] == "🟢 **Modello rilevato localmente**"
+
+def test_check_model_status_sharded_complete():
+    from unittest.mock import mock_open
+    weight_map_json = '{"weight_map": {"model.embed_tokens.weight": "model-00001-of-00002.safetensors", "model.layers.0.self_attn.q_proj.weight": "model-00002-of-00002.safetensors"}}'
+    
+    with patch("relictoepub.ui.components.try_to_load_from_cache") as mock_load, \
+         patch("builtins.open", mock_open(read_data=weight_map_json)):
+         
+        def side_effect(model_id, filename):
+            if filename == "config.json":
+                return "/path/to/cached/config.json"
+            if filename == "model.safetensors.index.json":
+                return "/path/to/cached/model.safetensors.index.json"
+            if filename in ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"]:
+                return f"/path/to/cached/{filename}"
+            return None
+            
+        mock_load.side_effect = side_effect
+        is_ok, status_str = check_model_status("baidu/Unlimited-OCR")
+        assert is_ok is True
+        assert "🟢 **Modello rilevato localmente**" in status_str
+
+def test_check_model_status_sharded_incomplete():
+    from unittest.mock import mock_open
+    weight_map_json = '{"weight_map": {"model.embed_tokens.weight": "model-00001-of-00002.safetensors", "model.layers.0.self_attn.q_proj.weight": "model-00002-of-00002.safetensors"}}'
+    
+    with patch("relictoepub.ui.components.try_to_load_from_cache") as mock_load, \
+         patch("builtins.open", mock_open(read_data=weight_map_json)):
+         
+        def side_effect(model_id, filename):
+            if filename == "config.json":
+                return "/path/to/cached/config.json"
+            if filename == "model.safetensors.index.json":
+                return "/path/to/cached/model.safetensors.index.json"
+            if filename == "model-00001-of-00002.safetensors":
+                return "/path/to/cached/model-00001-of-00002.safetensors"
+            return None
+            
+        mock_load.side_effect = side_effect
+        is_ok, status_str = check_model_status("baidu/Unlimited-OCR")
+        assert is_ok is False
+        assert "🔴 **Modello incompleto**" in status_str

@@ -39,10 +39,30 @@ def quantization_choices() -> tuple[list, str]:
 
 
 def check_model_status(model_id: str = "baidu/Unlimited-OCR") -> tuple[bool, str]:
-    """Controlla se il file di configurazione del modello è presente nella cache locale."""
+    """Controlla se il file di configurazione e tutti i pesi del modello sono presenti nella cache locale."""
+    import json
     try:
-        path = try_to_load_from_cache(model_id, "config.json")
-        if isinstance(path, str):
+        # 1. Controlla config.json
+        config_path = try_to_load_from_cache(model_id, "config.json")
+        if not isinstance(config_path, str):
+            return False, "🔴 **Modello non presente localmente** (scaricalo ora o verrà scaricato al primo avvio)"
+            
+        # 2. Controlla se è un modello shardato (cerca l'indice dei pesi)
+        index_path = try_to_load_from_cache(model_id, "model.safetensors.index.json")
+        if isinstance(index_path, str):
+            with open(index_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                weight_files = set(data.get("weight_map", {}).values())
+                # Verifica che tutti i file dei pesi siano presenti in cache
+                for wf in weight_files:
+                    wf_path = try_to_load_from_cache(model_id, wf)
+                    if not isinstance(wf_path, str):
+                        return False, "🔴 **Modello incompleto** (download pesi in corso o non avviato)"
+            return True, "🟢 **Modello rilevato localmente** (pronto all'uso)"
+            
+        # 3. Altrimenti controlla il file singolo model.safetensors
+        single_path = try_to_load_from_cache(model_id, "model.safetensors")
+        if isinstance(single_path, str):
             return True, "🟢 **Modello rilevato localmente** (pronto all'uso)"
     except Exception:
         pass
