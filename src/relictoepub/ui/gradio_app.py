@@ -58,7 +58,6 @@ def _run_pipeline(
     title: str,
     author: str,
     output_dir: str,
-    progress: gr.Progress = gr.Progress(),
 ) -> Iterator[tuple[str, list, object, object]]:
     """Wrapper Gradio di :meth:`Pipeline.run_iter`.
 
@@ -128,13 +127,7 @@ def _run_pipeline(
                 base_log_text = (base_log_text + "\n" + line).strip()
                 log_to_show = base_log_text
 
-            # Aggiorna la Progress nativa di Gradio usando solo la prima riga descrittiva (senza i token parziali)
-            # per evitare di allungare a dismisura e far flippare la barra
-            progress_desc = event.message.split("\n")[0]
-            if event.total:
-                progress((event.current, event.total), desc=progress_desc)
-            else:
-                progress(0, desc=progress_desc)
+
 
             # Aggiorna la gallery di preview dopo la fase rendering
             if event.phase == "rendering" and event.extra.get("output_dir"):
