@@ -269,7 +269,7 @@ class Pipeline:
             all_markdown_parts.extend(batch_markdown_parts)
             all_pages_processed += len(batch_pages)
 
-        full_markdown = "\n\n".join(all_markdown_parts)
+        full_markdown = "\n\n<!-- pagebreak -->\n\n".join(all_markdown_parts)
 
         # 3) Clean
         yield ProgressEvent(phase="cleaning", message="Pulizia testo OCR…")

@@ -69,7 +69,7 @@ class BookMetadata:
 
 
 _HEADING_PATTERN = re.compile(
-    r"^(#{1,2})\s+(.+?)\s*$", re.MULTILINE
+    r"^(?:(#{1,2})\s+(.+?)|<!-- pagebreak -->)\s*$", re.MULTILINE
 )
 
 
@@ -106,10 +106,10 @@ def _convert_markdown_to_xhtml(markdown: str) -> str:
 
 
 def _split_into_chapters(markdown: str) -> list[dict]:
-    """Divide il Markdown in capitoli logici sui tag ``h1``/``h2``.
+    """Divide il Markdown in capitoli logici sui tag ``h1``/``h2`` o pagebreak.
 
     Restituisce una lista di dict ``{"level", "title", "body"}``.
-    L'intestazione iniziale (prima di qualunque ``h1``) diventa
+    L'intestazione iniziale (prima di qualunque match) diventa
     un capitolo *frontmatter* con titolo vuoto.
     """
     matches = list(_HEADING_PATTERN.finditer(markdown))
@@ -117,7 +117,7 @@ def _split_into_chapters(markdown: str) -> list[dict]:
         return [{"level": 1, "title": "", "body": markdown.strip()}]
 
     chapters: list[dict] = []
-    # Tutto ciò che precede il primo heading → frontmatter
+    # Tutto ciò che precede il primo match → frontmatter
     if matches[0].start() > 0:
         chapters.append(
             {"level": 1, "title": "", "body": markdown[: matches[0].start()].strip()}
@@ -127,15 +127,27 @@ def _split_into_chapters(markdown: str) -> list[dict]:
         next_start = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
         heading_line = match.group(0)
         body = markdown[match.end() : next_start].strip()
-        chapters.append(
-            {
-                "level": len(match.group(1)),
-                "title": match.group(2).strip(),
-                "body": body,
-                # Conservo la riga heading per pypandoc — essa produce <h1>/<h2>
-                "_raw_heading": heading_line,
-            }
-        )
+        
+        if match.group(1) is not None:
+            # È un'intestazione H1/H2
+            chapters.append(
+                {
+                    "level": len(match.group(1)),
+                    "title": match.group(2).strip(),
+                    "body": body,
+                    # Conservo la riga heading per pypandoc — essa produce <h1>/<h2>
+                    "_raw_heading": heading_line,
+                }
+            )
+        else:
+            # È un pagebreak
+            chapters.append(
+                {
+                    "level": 1,
+                    "title": "",
+                    "body": body,
+                }
+            )
     return chapters
 
 
