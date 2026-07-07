@@ -77,16 +77,12 @@ def _run_pipeline(
         yield f"❌ File non valido: {pdf_path}", gallery, None, gr.update()
         return
 
-    if output_dir.strip():
-        try:
-            output_dir_path = Path(output_dir.strip())
-            output_dir_path.mkdir(parents=True, exist_ok=True)
-            output_epub = output_dir_path / pdf_path_obj.with_suffix(".epub").name
-        except Exception as e:
-            yield f"❌ Impossibile creare o accedere alla cartella di destinazione: {e}", gallery, None, gr.update()
-            return
-    else:
-        output_epub = pdf_path_obj.with_suffix(".epub")
+    import tempfile
+    import uuid
+    import shutil
+
+    # Definisci il path temporaneo sicuro in cui compilare l'EPUB (per bypassare la sandbox Gradio)
+    temp_output_epub = Path(tempfile.gettempdir()) / f"relictoepub_{uuid.uuid4().hex[:8]}.epub"
 
     metadata = BookMetadata(
         title=title or pdf_path_obj.stem,
@@ -121,7 +117,7 @@ def _run_pipeline(
     )
 
     try:
-        for event in pipeline.run_iter(pdf_path_obj, output_epub):
+        for event in pipeline.run_iter(pdf_path_obj, temp_output_epub):
             line = _format_event(event)
             log_text = (log_text + "\n" + line).strip()
             # Aggiorna la Progress nativa di Gradio
@@ -140,13 +136,33 @@ def _run_pipeline(
 
             yield log_text, gallery, None, gr.update()
 
+        # Copia il file temporaneo sicuro nella destinazione scelta
+        final_dest_str = ""
+        if output_dir.strip():
+            try:
+                output_dir_path = Path(output_dir.strip())
+                output_dir_path.mkdir(parents=True, exist_ok=True)
+                final_dest_epub = output_dir_path / pdf_path_obj.with_suffix(".epub").name
+                shutil.copy(temp_output_epub, final_dest_epub)
+                final_dest_str = f"\n📁 Copiato nella cartella di destinazione: {final_dest_epub}"
+            except Exception as e:
+                final_dest_str = f"\n⚠️ Impossibile copiare nella cartella di destinazione: {e}"
+        else:
+            try:
+                final_dest_epub = pdf_path_obj.with_suffix(".epub")
+                shutil.copy(temp_output_epub, final_dest_epub)
+                final_dest_str = f"\n📁 Salvato in: {final_dest_epub}"
+            except Exception as e:
+                final_dest_str = f"\n⚠️ Impossibile salvare nella cartella del PDF: {e}"
+
         # Evento finale: aggiungi riepilogo e abilita il download
         summary = (
-            f"\n\n✅ EPUB pronto: {output_epub}"
-            f"\n📁 Dimensione: {output_epub.stat().st_size / 1024:.1f} KB"
+            f"\n\n✅ EPUB pronto!"
+            f"{final_dest_str}"
+            f"\n📁 Dimensione: {temp_output_epub.stat().st_size / 1024:.1f} KB"
         )
         log_text = (log_text + summary).strip()
-        yield log_text, gallery, str(output_epub), check_model_status()[1]
+        yield log_text, gallery, str(temp_output_epub), check_model_status()[1]
     except Exception as exc:
         err = f"\n❌ Errore: {exc}\n{traceback.format_exc()}"
         log_text = (log_text + err).strip()
