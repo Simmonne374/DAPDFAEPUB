@@ -119,11 +119,6 @@ class UnlimitedOCRRunner:
         t0 = time.perf_counter()
 
         try:
-            self._processor = AutoProcessor.from_pretrained(
-                self.config.model_id,
-                trust_remote_code=True,
-                cache_dir=str(self.config.cache_dir) if self.config.cache_dir else None,
-            )
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.config.model_id,
                 trust_remote_code=True,
@@ -172,33 +167,34 @@ class UnlimitedOCRRunner:
         prompt = self.config.prompt_template
         ngram_window = self.config.ngram_window_multi if len(images) > 1 else 128
 
+        import tempfile
         try:
             import torch
-            inputs = self._processor(
-                text=[prompt] * len(images),
-                images=images,
-                return_tensors="pt",
-            )
-            device = next(self._model.parameters()).device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-
-            with torch.inference_mode():
-                generated = self._model.generate(
-                    **inputs,
-                    max_new_tokens=self.config.max_new_tokens,
-                    do_sample=False,
+            temp_dir = tempfile.gettempdir()
+            
+            # Utilizza i metodi ufficiali del modello Unlimited-OCR
+            if len(image_paths) == 1:
+                decoded = self._model.infer(
+                    self._tokenizer,
+                    prompt=prompt,
+                    image_file=str(image_paths[0]),
+                    eval_mode=True,
+                    max_length=self.config.max_new_tokens,
                     no_repeat_ngram_size=self.config.ngram_no_repeat_size,
-                    # Alcune versioni del wrapper custom non supportano
-                    # direttamente ngram_window via API generate — viene
-                    # impostato a livello di LogitProcessor se necessario.
-                    pad_token_id=self._tokenizer.pad_token_id,
-                    eos_token_id=self._tokenizer.eos_token_id,
+                    ngram_window=ngram_window,
+                    output_path=temp_dir
                 )
-
-            decoded = self._tokenizer.decode(
-                generated[0],
-                skip_special_tokens=self.config.skip_special_tokens,
-            )
+            else:
+                decoded, _ = self._model.infer_multi(
+                    self._tokenizer,
+                    prompt=prompt,
+                    image_files=[str(p) for p in image_paths],
+                    image_size=1024,
+                    max_length=self.config.max_new_tokens,
+                    no_repeat_ngram_size=self.config.ngram_no_repeat_size,
+                    ngram_window=ngram_window,
+                    output_path=temp_dir
+                )
         except Exception as exc:
             logger.exception("Errore durante l'inferenza del batch")
             raise RuntimeError(f"Inferenza Unlimited-OCR fallita: {exc}") from exc
