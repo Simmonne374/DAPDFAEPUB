@@ -69,7 +69,7 @@ class BookMetadata:
 
 
 _HEADING_PATTERN = re.compile(
-    r"^(?:(#{1,2})\s+(.+?)|<!-- pagebreak -->)\s*$", re.MULTILINE
+    r"^(?:(#)\s+(.+?)|<!-- pagebreak -->)\s*$", re.MULTILINE
 )
 
 

@@ -152,6 +152,36 @@ a {
   page-break-before: always;
 }
 
+/* Intestazioni, piè di pagina e numeri di pagina */
+.page_number, .page-number {
+  display: block;
+  text-align: center;
+  font-size: 0.8em;
+  color: #666666;
+  margin-top: 2em;
+  border-top: 1px solid #dddddd;
+  padding-top: 0.5em;
+  clear: both;
+}
+.footer {
+  display: block;
+  text-align: center;
+  font-size: 0.8em;
+  color: #666666;
+  margin-top: 1.5em;
+  clear: both;
+}
+.header {
+  display: block;
+  text-align: center;
+  font-size: 0.8em;
+  color: #666666;
+  margin-bottom: 1.5em;
+  border-bottom: 1px solid #dddddd;
+  padding-bottom: 0.5em;
+  clear: both;
+}
+
 /* Nessun elemento interattivo */
 * {
   transition: none !important;

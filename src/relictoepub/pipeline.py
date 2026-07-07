@@ -222,7 +222,19 @@ class Pipeline:
             for idx, page in enumerate(batch_pages):
                 page_text = pages_raw[idx] if idx < len(pages_raw) else ""
                 
-                # Rimuoviamo solo i tag di layout per piè di pagina, numeri di pagina e intestazioni, mantenendo il testo
+                def wrap_layout_tags(match):
+                    label = match.group(1).strip()
+                    text_content = match.group(2).strip()
+                    return f'\n\n<div class="{label}">{text_content}</div>\n\n'
+
+                # Avvolge i tag footer/page_number/header con testo in un div XHTML per conservarli ed impaginarli
+                page_text = re.sub(
+                    r"<\|det\|>(footer|page_number|header)\[[^\]]+\]<\|/det\|>([^\n<]+)",
+                    wrap_layout_tags,
+                    page_text
+                )
+
+                # Rimuoviamo eventuali tag residui vuoti di layout
                 page_text = re.sub(
                     r"<\|det\|>(?:footer|page_number|header)\[[^\]]+\]<\|/det\|>",
                     "",
