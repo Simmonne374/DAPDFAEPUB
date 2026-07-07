@@ -265,7 +265,10 @@ class Pipeline:
                         )
                         if result_path and result_path.exists():
                             saved_crops.append(result_path)
-                            return f"\n\n![](images/{out_filename})\n\n"
+                            # Calcola la larghezza percentuale relativa basata sulle coordinate originali
+                            width_pct = max(30.0, min(100.0, (x2 - x1) / 10.0))
+                            # Genera direttamente il tag img XHTML con stile inline per mantenere l'aspect ratio
+                            return f'\n\n<img src="images/{out_filename}" style="width:{width_pct:.1f}%;max-width:100%;height:auto;display:block;margin:1em auto;" />\n\n'
                     
                     elif label == "title":
                         return "\n\n# "
