@@ -12,6 +12,7 @@ composti in :mod:`relictoepub.ui.gradio_app`. Tenerli separati aiuta a:
 from __future__ import annotations
 
 import gradio as gr
+from huggingface_hub import try_to_load_from_cache
 
 
 def quantization_choices() -> tuple[list, str]:
@@ -35,6 +36,17 @@ def quantization_choices() -> tuple[list, str]:
     if not cuda_ok or not bnb_ok:
         return [choices[2]], "none"
     return choices, default
+
+
+def check_model_status(model_id: str = "baidu/Unlimited-OCR") -> tuple[bool, str]:
+    """Controlla se il file di configurazione del modello è presente nella cache locale."""
+    try:
+        path = try_to_load_from_cache(model_id, "config.json")
+        if isinstance(path, str):
+            return True, "🟢 **Modello rilevato localmente** (pronto all'uso)"
+    except Exception:
+        pass
+    return False, "🔴 **Modello non presente localmente** (scaricalo ora o verrà scaricato al primo avvio)"
 
 
 def upload_pdf() -> gr.File:
@@ -130,6 +142,7 @@ def epub_download(value: str | None = None) -> gr.File:
 
 __all__ = [
     "advanced_options",
+    "check_model_status",
     "epub_download",
     "gallery_preview",
     "log_panel",
