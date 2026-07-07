@@ -83,7 +83,11 @@ def denormalize_bbox(
     image_size: tuple[int, int],
     normalize_range: float = DEFAULT_NORMALIZE_RANGE,
 ) -> tuple[int, int, int, int]:
-    """Converte una :class:`BBox` normalizzata in coordinate pixel.
+    """Converte una :class:`BBox` normalizzata in coordinate pixel considerando il padding.
+
+    Il modello riproietta e centra le pagine all'interno di un quadrato fisso
+    tramite padding (ImageOps.pad), quindi dobbiamo calcolare lo scostamento
+    e la scala corretti per non tagliare o deformare i ritagli.
 
     Args:
         bbox: BBox in scala ``[0, normalize_range]``.
@@ -95,13 +99,30 @@ def denormalize_bbox(
         :py:meth:`PIL.Image.Image.crop`.
     """
     img_w, img_h = image_size
-    scale_x = img_w / normalize_range
-    scale_y = img_h / normalize_range
 
-    left = int(round(bbox.x_min * scale_x))
-    upper = int(round(bbox.y_min * scale_y))
-    right = int(round(bbox.x_max * scale_x))
-    lower = int(round(bbox.y_max * scale_y))
+    if img_h >= img_w:
+        # Portrait (altezza riempie normalize_range, larghezza ha padding laterale)
+        scaled_w = normalize_range * (img_w / img_h)
+        pad_left = (normalize_range - scaled_w) / 2.0
+        
+        x_min_mapped = (bbox.x_min - pad_left) * (img_h / normalize_range)
+        x_max_mapped = (bbox.x_max - pad_left) * (img_h / normalize_range)
+        y_min_mapped = bbox.y_min * (img_h / normalize_range)
+        y_max_mapped = bbox.y_max * (img_h / normalize_range)
+    else:
+        # Landscape (larghezza riempie normalize_range, altezza ha padding sopra/sotto)
+        scaled_h = normalize_range * (img_h / img_w)
+        pad_top = (normalize_range - scaled_h) / 2.0
+        
+        x_min_mapped = bbox.x_min * (img_w / normalize_range)
+        x_max_mapped = bbox.x_max * (img_w / normalize_range)
+        y_min_mapped = (bbox.y_min - pad_top) * (img_w / normalize_range)
+        y_max_mapped = (bbox.y_max - pad_top) * (img_w / normalize_range)
+
+    left = int(round(x_min_mapped))
+    upper = int(round(y_min_mapped))
+    right = int(round(x_max_mapped))
+    lower = int(round(y_max_mapped))
 
     # Clipping difensivo per evitare crop fuori immagine
     left = max(0, min(img_w - 1, left))
