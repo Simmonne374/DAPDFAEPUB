@@ -267,10 +267,12 @@ class Pipeline:
                             saved_crops.append(result_path)
                             return f"\n\n![](images/{out_filename})\n\n"
                     
-                    elif label in ("title", "heading"):
+                    elif label == "title":
                         return "\n\n# "
-                    elif label == "subtitle":
+                    elif label == "heading":
                         return "\n\n## "
+                    elif label == "subtitle":
+                        return "\n\n### "
                         
                     return "\n\n"
                 
