@@ -56,22 +56,22 @@ def _run_pipeline(
     title: str,
     author: str,
     progress: gr.Progress = gr.Progress(),
-) -> Iterator[tuple[str, list, object]]:
+) -> Iterator[tuple[str, list, object, object]]:
     """Wrapper Gradio di :meth:`Pipeline.run_iter`.
 
-    Yields tuple ``(log_text, gallery_items, download_file)`` per
+    Yields tuple ``(log_text, gallery_items, download_file, model_status)`` per
     aggiornare i componenti della UI.
     """
     log_text = ""
     gallery: list = []
 
     if pdf_path is None:
-        yield "❌ Nessun PDF selezionato.", gallery, None
+        yield "❌ Nessun PDF selezionato.", gallery, None, gr.update()
         return
 
     pdf_path_obj = Path(pdf_path)
     if not pdf_path_obj.is_file():
-        yield f"❌ File non valido: {pdf_path}", gallery, None
+        yield f"❌ File non valido: {pdf_path}", gallery, None, gr.update()
         return
 
     output_epub = pdf_path_obj.with_suffix(".epub")
@@ -125,7 +125,7 @@ def _run_pipeline(
                     thumbs = sorted(model_dir.glob("page_*.png"))[:3]
                     gallery = [(str(t), None) for t in thumbs]
 
-            yield log_text, gallery, None
+            yield log_text, gallery, None, gr.update()
 
         # Evento finale: aggiungi riepilogo e abilita il download
         summary = (
@@ -133,11 +133,11 @@ def _run_pipeline(
             f"\n📁 Dimensione: {output_epub.stat().st_size / 1024:.1f} KB"
         )
         log_text = (log_text + summary).strip()
-        yield log_text, gallery, str(output_epub)
+        yield log_text, gallery, str(output_epub), check_model_status()[1]
     except Exception as exc:
         err = f"\n❌ Errore: {exc}\n{traceback.format_exc()}"
         log_text = (log_text + err).strip()
-        yield log_text, gallery, None
+        yield log_text, gallery, None, gr.update()
 
 
 def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component]]:
@@ -150,15 +150,19 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component]]:
     
     # Trova il percorso dell'eseguibile huggingface-cli
     cli_path = Path(sys.executable).parent / "huggingface-cli"
-    if not cli_path.exists() and not cli_path.with_suffix(".exe").exists():
+    if sys.platform == "win32" or cli_path.with_suffix(".exe").exists():
+        cli_path = cli_path.with_suffix(".exe")
+    if not cli_path.exists():
         cli_path = Path("huggingface-cli")  # fallback
         
     cmd = [
         str(cli_path), "download", "baidu/Unlimited-OCR",
         "--include", "*.safetensors", "--include", "*.json", "--include", "*.py",
-        "--include", "*.txt", "--include", "*.bin", "--include", "*.md"
+        "--include", "*.txt", "--include", "*.bin", "--include", "*.md",
+        "--quiet"
     ]
     
+    process = None
     try:
         import os
         process = subprocess.Popen(
@@ -186,6 +190,16 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component]]:
     except Exception as e:
         log_text += f"\n\n❌ Errore imprevisto durante l'avvio del download: {e}"
         yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True)
+    finally:
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
 
 
 def build_demo() -> gr.Blocks:
@@ -242,7 +256,7 @@ def build_demo() -> gr.Blocks:
             outputs=[log, model_status, download_btn],
         )
 
-        # Wiring: click → streaming updates su log, gallery, download
+        # Wiring: click → streaming updates su log, gallery, download, status
         run_btn.click(
             fn=_run_pipeline,
             inputs=[
@@ -254,7 +268,7 @@ def build_demo() -> gr.Blocks:
                 opts["title"],
                 opts["author"],
             ],
-            outputs=[log, gallery, download],
+            outputs=[log, gallery, download, model_status],
         )
 
     return demo

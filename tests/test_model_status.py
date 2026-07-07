@@ -62,6 +62,11 @@ def test_download_model_ui_success():
         assert "🟢 **Modello rilevato localmente**" == status_last
         assert btn_last.interactive is True
 
+        # Assert cmd has --quiet
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        assert "--quiet" in cmd
+
 
 def test_download_model_ui_failure():
     from unittest.mock import MagicMock
@@ -99,3 +104,65 @@ def test_download_model_ui_exception():
         assert "huggingface-cli not found" in log_last
         assert "🔴 **Errore nel download del modello**" == status_last
         assert btn_last.interactive is True
+
+
+def test_download_model_ui_generator_closed():
+    from unittest.mock import MagicMock
+    from relictoepub.ui.gradio_app import _download_model_ui
+    
+    mock_process = MagicMock()
+    mock_process.poll.return_value = None
+    mock_process.stdout.readline.side_effect = ["Downloading safetensors...\n", ""]
+    
+    with patch("subprocess.Popen", return_value=mock_process):
+        generator = _download_model_ui()
+        # Advance generator to spawn the process
+        next(generator)  # First yield: "🔄 Inizio download..."
+        next(generator)  # Second yield: inside process loop
+        
+        # Close the generator prematurely (this raises GeneratorExit)
+        generator.close()
+        
+        # Verify process.terminate was called
+        mock_process.terminate.assert_called_once()
+        mock_process.wait.assert_called_once_with(timeout=5)
+
+
+def test_run_pipeline_yields_four_values():
+    from unittest.mock import MagicMock
+    from relictoepub.ui.gradio_app import _run_pipeline
+    
+    with patch("relictoepub.ui.gradio_app.Pipeline") as mock_pipeline_cls:
+        mock_pipeline = mock_pipeline_cls.return_value
+        from relictoepub.pipeline import ProgressEvent
+        mock_event = ProgressEvent(phase="rendering", current=1, total=10, message="Rendering page 1")
+        mock_pipeline.run_iter.return_value = [mock_event]
+        
+        with patch("relictoepub.ui.gradio_app.check_model_status") as mock_status:
+            mock_status.return_value = (True, "🟢 **Modello rilevato localmente**")
+            
+            with patch("pathlib.Path.is_file", return_value=True), \
+                 patch("pathlib.Path.stat") as mock_stat:
+                
+                mock_stat_val = MagicMock()
+                mock_stat_val.st_size = 102400
+                mock_stat.return_value = mock_stat_val
+                
+                generator = _run_pipeline(
+                    pdf_path="test.pdf",
+                    pages_per_batch=2,
+                    dpi=150,
+                    quantization="none",
+                    eink_optimize=False,
+                    title="Test Book",
+                    author="Test Author"
+                )
+                
+                results = list(generator)
+                
+                assert len(results) >= 2
+                for res in results:
+                    assert len(res) == 4
+                    
+                # Verify that the last yield has the check_model_status message as the 4th element
+                assert results[-1][3] == "🟢 **Modello rilevato localmente**"
