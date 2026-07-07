@@ -164,20 +164,26 @@ def _xml_escape(text: str) -> str:
     )
 
 
-def _inject_responsive_images(html: str, image_subdir: str = "images") -> str:
-    """Aggiunge ``max-width:100%; height:auto`` a tutti i ``<img>`` emessi.
+def _inject_responsive_images(html: str) -> str:
+    """Aggiunge ``max-width:100%; height:auto`` a tutti i ``<img>`` emessi in modo XML-compliant.
 
     Idempotente — se lo stile è già presente non lo duplica.
     """
-    pattern = re.compile(r"<img([^>]+)>")
-    return pattern.sub(
-        lambda m: (
-            m.group(0)
-            if "max-width:100%" in m.group(0)
-            else f'<img{m.group(1)} style="max-width:100%; height:auto; display:block; margin:1em auto;">'
-        ),
-        html,
-    )
+    pattern = re.compile(r"<img([^>]*?)(/?)>")
+    def repl(m):
+        attrs = m.group(1).rstrip()
+        is_self_closing = m.group(2) or "/"
+        
+        if "max-width:100%" in attrs:
+            return m.group(0)
+            
+        if attrs.endswith("/"):
+            attrs = attrs[:-1].rstrip()
+            is_self_closing = "/"
+            
+        return f'<img {attrs} style="max-width:100%; height:auto; display:block; margin:1em auto;" {is_self_closing}>'
+        
+    return pattern.sub(repl, html)
 
 
 def _add_cover_page(chapters: list[ChapterInfo], cover_image: Path | None) -> list[ChapterInfo]:
@@ -200,16 +206,27 @@ def _add_cover_page(chapters: list[ChapterInfo], cover_image: Path | None) -> li
     return [cover_chapter] + chapters
 
 
-def _build_navigation_xhtml(title: str) -> str:
-    """Crea il file ``nav.xhtml`` (EPUB3 navigation document)."""
+def _build_navigation_xhtml(title: str, chapters: list[ChapterInfo]) -> str:
+    """Crea il file ``nav.xhtml`` (EPUB3 navigation document) con l'indice dinamico dei capitoli."""
+    items = []
+    for ch in chapters:
+        # Salta la copertina dall'indice dei capitoli principale
+        if ch.filename == "cover.xhtml":
+            continue
+        items.append(
+            f'      <li><a href="{ch.filename}">{_xml_escape(ch.title)}</a></li>'
+        )
+    list_content = "\n".join(items)
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
 <head><title>{_xml_escape(title)} — Indice</title></head>
 <body>
 <nav epub:type="toc" id="toc">
-<h1>Indice</h1>
-<ol id="toc-list"></ol>
+  <h1>Indice</h1>
+  <ol id="toc-list">
+{list_content}
+  </ol>
 </nav>
 </body>
 </html>"""
@@ -294,15 +311,14 @@ def build_epub(
         for chapter in chapters:
             (oebps / chapter.filename).write_text(chapter.xhtml, encoding="utf-8")
 
-        # Cover image (se presente) — copia nella cartella images
+        # Cover image (se presente) — converti in WebP per E-ink
         if cover_image is not None and cover_image.exists():
             cover_dest = images_dir / "cover.webp"
             try:
-                shutil.copy(cover_image, cover_dest)
-            except Exception:
-                # Se fallisce la copia del formato originale, converti a WebP
                 from relictoepub.postprocess.webp_optim import optimize_for_eink
                 optimize_for_eink(cover_image, cover_dest)
+            except Exception:
+                shutil.copy(cover_image, cover_dest)
 
         # Asset images (WebP ready)
         for img_path in images:
@@ -315,7 +331,7 @@ def build_epub(
             shutil.copy(img_path, target)
 
         # Navigation document
-        (oebps / "nav.xhtml").write_text(_build_navigation_xhtml(metadata.title), encoding="utf-8")
+        (oebps / "nav.xhtml").write_text(_build_navigation_xhtml(metadata.title, chapters), encoding="utf-8")
 
         # content.opf — descrittore del package
         manifest_items: list[str] = []

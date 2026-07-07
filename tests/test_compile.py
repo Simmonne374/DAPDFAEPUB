@@ -21,14 +21,20 @@ from relictoepub.compile.build_epub import (
 
 
 # Skip automatico se pandoc non è installato
+try:
+    _check_pandoc()
+    has_pandoc = True
+except Exception:
+    has_pandoc = False
+
 pytestmark = pytest.mark.skipif(
-    shutil.which("pandoc") is None,
+    not has_pandoc,
     reason="pandoc non installato (richiesto per pypandoc)",
 )
 
 
 def test_check_pandoc_returns_true_when_installed() -> None:
-    assert _check_pandoc() is True
+    assert isinstance(_check_pandoc(), str)
 
 
 def test_build_epub_minimal(tmp_path: Path) -> None:
@@ -70,12 +76,14 @@ def test_build_epub_with_cover(tmp_path: Path, sample_image: Path) -> None:
 def test_book_metadata_defaults() -> None:
     """I default di BookMetadata devono essere sensati."""
     m = BookMetadata(title="T")
-    assert m.language == "en"
+    assert m.language == "it"
     assert m.identifier  # non vuoto
     assert m.title == "T"
 
 
 def test_chapter_info_dataclass() -> None:
-    ch = ChapterInfo(title="Cap 1", level=1, anchor="cap-1", content_md="x")
+    ch = ChapterInfo(title="Cap 1", level=1, filename="chap_0001.xhtml", xhtml="xhtml_content")
     assert ch.title == "Cap 1"
     assert ch.level == 1
+    assert ch.filename == "chap_0001.xhtml"
+    assert ch.xhtml == "xhtml_content"
