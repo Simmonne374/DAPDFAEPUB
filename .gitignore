@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Distribution / packaging
+*.whl
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Outputs
+output/*
+!output/.gitkeep
+samples/*.pdf
+!samples/.gitkeep
+
+# Models (huge — re-downloaded via huggingface-cli)
+models/
+*.safetensors
+*.bin
+*.pth
+*.pt
+
+# Local configs / caches
+.env
+.env.local
+.cache/
+huggingface/
+
+# OS
+Thumbs.db
