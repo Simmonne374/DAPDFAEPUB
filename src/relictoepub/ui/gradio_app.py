@@ -20,6 +20,9 @@ from pathlib import Path
 
 import gradio as gr
 
+import sys
+import subprocess
+
 from relictoepub.compile.build_epub import BookMetadata
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.pipeline import Pipeline, ProgressEvent
@@ -29,6 +32,7 @@ from relictoepub.ui.components import (
     gallery_preview,
     log_panel,
     upload_pdf,
+    check_model_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -136,6 +140,54 @@ def _run_pipeline(
         yield log_text, gallery, None
 
 
+def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component]]:
+    """Avvia il download del modello Unlimited-OCR tramite subprocess.
+    
+    Yields tuple (log_text, model_status_text, download_button_update).
+    """
+    log_text = "🔄 Inizio download del modello 'baidu/Unlimited-OCR' (circa 6 GB)..."
+    yield log_text, "⏳ **Download in corso...**", gr.Button(interactive=False)
+    
+    # Trova il percorso dell'eseguibile huggingface-cli
+    cli_path = Path(sys.executable).parent / "huggingface-cli"
+    if not cli_path.exists() and not cli_path.with_suffix(".exe").exists():
+        cli_path = Path("huggingface-cli")  # fallback
+        
+    cmd = [
+        str(cli_path), "download", "baidu/Unlimited-OCR",
+        "--include", "*.safetensors", "--include", "*.json", "--include", "*.py",
+        "--include", "*.txt", "--include", "*.bin", "--include", "*.md"
+    ]
+    
+    try:
+        import os
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=os.environ.copy()
+        )
+        
+        # Legge lo standard output del processo riga per riga
+        for line in iter(process.stdout.readline, ""):
+            log_text = (log_text + "\n" + line.strip()).strip()
+            yield log_text, "⏳ **Download in corso...**", gr.Button(interactive=False)
+            
+        process.wait()
+        if process.returncode == 0:
+            log_text += "\n\n✅ Modello scaricato e verificato con successo!"
+            _, status_str = check_model_status()
+            yield log_text, status_str, gr.Button(interactive=True)
+        else:
+            log_text += f"\n\n❌ Errore durante il download del modello. Codice d'uscita: {process.returncode}"
+            yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True)
+    except Exception as e:
+        log_text += f"\n\n❌ Errore imprevisto durante l'avvio del download: {e}"
+        yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True)
+
+
 def build_demo() -> gr.Blocks:
     """Costruisce l'app Gradio completa e la restituisce non ancora lanciata."""
     opts = advanced_options()
@@ -156,6 +208,12 @@ def build_demo() -> gr.Blocks:
         with gr.Row():
             # ============= COLONNA SINISTRA — input =============
             with gr.Column(scale=1):
+                # Nuova sezione download modello
+                with gr.Group():
+                    gr.Markdown("### 📦 Modello OCR (Unlimited-OCR)")
+                    model_status = gr.Markdown(value=check_model_status()[1])
+                    download_btn = gr.Button("📥 Scarica/Aggiorna Modello (~6 GB)", variant="secondary")
+
                 pdf_input = upload_pdf()
                 with gr.Accordion("⚙️ Opzioni avanzate", open=False):
                     opts_rendered = [
@@ -176,6 +234,13 @@ def build_demo() -> gr.Blocks:
                 log = log_panel()
                 gallery = gallery_preview()
                 download = epub_download()
+
+        # Wiring per il download del modello
+        download_btn.click(
+            fn=_download_model_ui,
+            inputs=[],
+            outputs=[log, model_status, download_btn],
+        )
 
         # Wiring: click → streaming updates su log, gallery, download
         run_btn.click(
