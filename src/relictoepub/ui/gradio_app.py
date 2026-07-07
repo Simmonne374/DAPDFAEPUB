@@ -13,6 +13,7 @@ i parametri e fa streaming degli eventi nel log e nella progress bar.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import traceback
 from collections.abc import Iterator
@@ -164,14 +165,17 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component]]:
     
     process = None
     try:
-        import os
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
             bufsize=1,
-            env=os.environ.copy()
+            env=env
         )
         
         # Legge lo standard output del processo riga per riga
