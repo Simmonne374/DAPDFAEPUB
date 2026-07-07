@@ -203,10 +203,10 @@ class Pipeline:
                     chunk = partial_text[-500:] if len(partial_text) > 500 else partial_text
                     yield ProgressEvent(
                         phase="ocr",
-                        message=f"OCR batch pagine {batch_start+1}-{batch_end}/{total_pages}\n\n[Testo estratto in tempo reale]:\n{chunk}",
+                        message=f"OCR batch pagine {batch_start+1}-{batch_end}/{total_pages}\n[Testo estratto in tempo reale]:\n{chunk}",
                         current=batch_start + 1, total=total_pages,
                         percent=(batch_end / total_pages) * 100.0,
-                        extra={"batch_size": len(batch_pages)},
+                        extra={"batch_size": len(batch_pages), "transient": True},
                     )
                 else:
                     final_raw_text = partial_text

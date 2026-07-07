@@ -65,7 +65,7 @@ def _run_pipeline(
     Yields tuple ``(log_text, gallery_items, download_file, model_status)`` per
     aggiornare i componenti della UI.
     """
-    log_text = ""
+    base_log_text = ""
     gallery: list = []
 
     if pdf_path is None:
@@ -99,7 +99,7 @@ def _run_pipeline(
         except Exception:
             cuda_ok = False
         if not cuda_ok:
-            log_text = (
+            base_log_text = (
                 f"\n⚠️ Quantizzazione {quant_mode.value} non disponibile senza CUDA; "
                 f"uso 'none' (lento)."
             )
@@ -119,12 +119,22 @@ def _run_pipeline(
     try:
         for event in pipeline.run_iter(pdf_path_obj, temp_output_epub):
             line = _format_event(event)
-            log_text = (log_text + "\n" + line).strip()
-            # Aggiorna la Progress nativa di Gradio
-            if event.total:
-                progress((event.current, event.total), desc=event.message)
+            
+            # Se l'evento è transitorio (streaming token), non lo salviamo nella storia di base
+            is_transient = event.extra and event.extra.get("transient")
+            if is_transient:
+                log_to_show = (base_log_text + "\n" + line).strip()
             else:
-                progress(0, desc=event.message)
+                base_log_text = (base_log_text + "\n" + line).strip()
+                log_to_show = base_log_text
+
+            # Aggiorna la Progress nativa di Gradio usando solo la prima riga descrittiva (senza i token parziali)
+            # per evitare di allungare a dismisura e far flippare la barra
+            progress_desc = event.message.split("\n")[0]
+            if event.total:
+                progress((event.current, event.total), desc=progress_desc)
+            else:
+                progress(0, desc=progress_desc)
 
             # Aggiorna la gallery di preview dopo la fase rendering
             if event.phase == "rendering" and event.extra.get("output_dir"):
@@ -134,7 +144,7 @@ def _run_pipeline(
                     thumbs = sorted(model_dir.glob("page_*.png"))[:3]
                     gallery = [(str(t), None) for t in thumbs]
 
-            yield log_text, gallery, None, gr.update()
+            yield log_to_show, gallery, None, gr.update()
 
         # Copia il file temporaneo sicuro nella destinazione scelta
         final_dest_str = ""
@@ -161,12 +171,12 @@ def _run_pipeline(
             f"{final_dest_str}"
             f"\n📁 Dimensione: {temp_output_epub.stat().st_size / 1024:.1f} KB"
         )
-        log_text = (log_text + summary).strip()
-        yield log_text, gallery, str(temp_output_epub), check_model_status()[1]
+        base_log_text = (base_log_text + summary).strip()
+        yield base_log_text, gallery, str(temp_output_epub), check_model_status()[1]
     except Exception as exc:
         err = f"\n❌ Errore: {exc}\n{traceback.format_exc()}"
-        log_text = (log_text + err).strip()
-        yield log_text, gallery, None, gr.update()
+        base_log_text = (base_log_text + err).strip()
+        yield base_log_text, gallery, None, gr.update()
 
 
 def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component]]:
