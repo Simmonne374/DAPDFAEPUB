@@ -79,6 +79,15 @@ def upload_pdf() -> gr.File:
     )
 
 
+def destination_folder() -> gr.Textbox:
+    """Campo di testo per la cartella di destinazione dell'EPUB."""
+    return gr.Textbox(
+        label="📁 Cartella di destinazione (opzionale)",
+        placeholder="Es: C:\\Libri - Lascia vuoto per salvare nella cartella del PDF",
+        lines=1,
+    )
+
+
 def advanced_options() -> dict[str, gr.components.Component]:
     """Ritorna un dict di componenti per l'accordion "Opzioni avanzate".
 
@@ -163,6 +172,7 @@ def epub_download(value: str | None = None) -> gr.File:
 __all__ = [
     "advanced_options",
     "check_model_status",
+    "destination_folder",
     "epub_download",
     "gallery_preview",
     "log_panel",

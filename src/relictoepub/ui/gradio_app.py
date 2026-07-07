@@ -34,6 +34,7 @@ from relictoepub.ui.components import (
     log_panel,
     upload_pdf,
     check_model_status,
+    destination_folder,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ def _run_pipeline(
     eink_optimize: bool,
     title: str,
     author: str,
+    output_dir: str,
     progress: gr.Progress = gr.Progress(),
 ) -> Iterator[tuple[str, list, object, object]]:
     """Wrapper Gradio di :meth:`Pipeline.run_iter`.
@@ -75,7 +77,17 @@ def _run_pipeline(
         yield f"❌ File non valido: {pdf_path}", gallery, None, gr.update()
         return
 
-    output_epub = pdf_path_obj.with_suffix(".epub")
+    if output_dir.strip():
+        try:
+            output_dir_path = Path(output_dir.strip())
+            output_dir_path.mkdir(parents=True, exist_ok=True)
+            output_epub = output_dir_path / pdf_path_obj.with_suffix(".epub").name
+        except Exception as e:
+            yield f"❌ Impossibile creare o accedere alla cartella di destinazione: {e}", gallery, None, gr.update()
+            return
+    else:
+        output_epub = pdf_path_obj.with_suffix(".epub")
+
     metadata = BookMetadata(
         title=title or pdf_path_obj.stem,
         author=author or "Unknown",
@@ -233,6 +245,7 @@ def build_demo() -> gr.Blocks:
                     download_btn = gr.Button("📥 Scarica/Aggiorna Modello (~6 GB)", variant="secondary")
 
                 pdf_input = upload_pdf()
+                dest_input = destination_folder()
                 with gr.Accordion("⚙️ Opzioni avanzate", open=False):
                     opts_rendered = [
                         ("pages_per_batch", opts["pages_per_batch"]),
@@ -271,6 +284,7 @@ def build_demo() -> gr.Blocks:
                 opts["eink_optimize"],
                 opts["title"],
                 opts["author"],
+                dest_input,
             ],
             outputs=[log, gallery, download, model_status],
         )

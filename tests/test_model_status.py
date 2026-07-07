@@ -160,7 +160,8 @@ def test_run_pipeline_yields_four_values():
                     quantization="none",
                     eink_optimize=False,
                     title="Test Book",
-                    author="Test Author"
+                    author="Test Author",
+                    output_dir=""
                 )
                 
                 results = list(generator)
