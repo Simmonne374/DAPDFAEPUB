@@ -222,9 +222,9 @@ class Pipeline:
             for idx, page in enumerate(batch_pages):
                 page_text = pages_raw[idx] if idx < len(pages_raw) else ""
                 
-                # Rimuoviamo piè di pagina, numeri di pagina e intestazioni completi (tag + testo sulla stessa riga)
+                # Rimuoviamo solo i tag di layout per piè di pagina, numeri di pagina e intestazioni, mantenendo il testo
                 page_text = re.sub(
-                    r"<\|det\|>(?:footer|page_number|header)\[[^\]]+\]<\|/det\|>[^\n]*",
+                    r"<\|det\|>(?:footer|page_number|header)\[[^\]]+\]<\|/det\|>",
                     "",
                     page_text
                 )
