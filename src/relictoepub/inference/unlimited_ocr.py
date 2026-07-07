@@ -152,6 +152,91 @@ class UnlimitedOCRRunner:
         """OCR di una singola pagina."""
         return self.run_batch([Path(image_path)])
 
+    def run_batch_iter(self, image_paths: Sequence[str | Path]) -> Iterator[tuple[str, str]]:
+        """Esegue l'OCR yielding del testo parziale in tempo reale (stream dei token)."""
+        if not image_paths:
+            yield "", "done"
+            return
+        self.load_model()
+
+        import tempfile
+        import threading
+        import queue
+        import sys
+        import io
+
+        class StreamRedirector(io.TextIOBase):
+            def __init__(self, q):
+                self.q = q
+            def write(self, s):
+                if s:
+                    self.q.put(s)
+                return len(s)
+            def flush(self):
+                pass
+
+        prompt = self.config.prompt_template
+        ngram_window = self.config.ngram_window_multi if len(image_paths) > 1 else 128
+        temp_dir = tempfile.gettempdir()
+
+        q = queue.Queue()
+        redirector = StreamRedirector(q)
+        result_container = {}
+
+        def worker():
+            try:
+                # Utilizza i metodi ufficiali del modello Unlimited-OCR
+                if len(image_paths) == 1:
+                    decoded = self._model.infer(
+                        self._tokenizer,
+                        prompt=prompt,
+                        image_file=str(image_paths[0]),
+                        eval_mode=True,
+                        max_length=self.config.max_new_tokens,
+                        no_repeat_ngram_size=self.config.ngram_no_repeat_size,
+                        ngram_window=ngram_window,
+                        output_path=temp_dir
+                    )
+                else:
+                    decoded, _ = self._model.infer_multi(
+                        self._tokenizer,
+                        prompt=prompt,
+                        image_files=[str(p) for p in image_paths],
+                        image_size=1024,
+                        max_length=self.config.max_new_tokens,
+                        no_repeat_ngram_size=self.config.ngram_no_repeat_size,
+                        ngram_window=ngram_window,
+                        output_path=temp_dir
+                    )
+                result_container["decoded"] = decoded
+            except Exception as e:
+                result_container["exception"] = e
+
+        old_stdout = sys.stdout
+        sys.stdout = redirector
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+
+        accumulated_text = ""
+        try:
+            while thread.is_alive() or not q.empty():
+                try:
+                    token = q.get(timeout=0.1)
+                    accumulated_text += token
+                    yield accumulated_text, "running"
+                except queue.Empty:
+                    continue
+        finally:
+            sys.stdout = old_stdout
+            thread.join()
+
+        if "exception" in result_container:
+            raise result_container["exception"]
+
+        decoded = result_container.get("decoded", accumulated_text)
+        yield decoded, "done"
+
     def run_batch(self, image_paths: Sequence[str | Path]) -> OCRPageResult:
         """OCR di un batch di pagine (multi-page one-shot).
 
@@ -159,48 +244,12 @@ class UnlimitedOCRRunner:
         del modello (32K token, paper §3.4). Per PDF molto lunghi
         la pipeline esterna deve gestire il batching.
         """
-        if not image_paths:
-            return OCRPageResult(markdown="", page_separators=0, raw_text="")
-        self.load_model()
+        final_decoded = ""
+        for partial_text, status in self.run_batch_iter(image_paths):
+            if status == "done":
+                final_decoded = partial_text
 
-        images = [Image.open(Path(p)).convert("RGB") for p in image_paths]
-        prompt = self.config.prompt_template
-        ngram_window = self.config.ngram_window_multi if len(images) > 1 else 128
-
-        import tempfile
-        try:
-            import torch
-            temp_dir = tempfile.gettempdir()
-            
-            # Utilizza i metodi ufficiali del modello Unlimited-OCR
-            if len(image_paths) == 1:
-                decoded = self._model.infer(
-                    self._tokenizer,
-                    prompt=prompt,
-                    image_file=str(image_paths[0]),
-                    eval_mode=True,
-                    max_length=self.config.max_new_tokens,
-                    no_repeat_ngram_size=self.config.ngram_no_repeat_size,
-                    ngram_window=ngram_window,
-                    output_path=temp_dir
-                )
-            else:
-                decoded, _ = self._model.infer_multi(
-                    self._tokenizer,
-                    prompt=prompt,
-                    image_files=[str(p) for p in image_paths],
-                    image_size=1024,
-                    max_length=self.config.max_new_tokens,
-                    no_repeat_ngram_size=self.config.ngram_no_repeat_size,
-                    ngram_window=ngram_window,
-                    output_path=temp_dir
-                )
-        except Exception as exc:
-            logger.exception("Errore durante l'inferenza del batch")
-            raise RuntimeError(f"Inferenza Unlimited-OCR fallita: {exc}") from exc
-
-        # Separa il prompt dall'output (le immagini sono state aggiunte)
-        raw_text = decoded.strip()
+        raw_text = final_decoded.strip()
         markdown = self._strip_image_tokens(raw_text)
 
         return OCRPageResult(
@@ -208,7 +257,7 @@ class UnlimitedOCRRunner:
             page_separators=raw_text.count("<page>") or 1,
             raw_text=raw_text,
             extra={
-                "batch_size": len(images),
+                "batch_size": len(image_paths),
                 "quantization": self.config.quantization.value,
             },
         )

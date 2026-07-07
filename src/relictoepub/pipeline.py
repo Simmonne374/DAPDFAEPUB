@@ -192,11 +192,27 @@ class Pipeline:
                 extra={"batch_size": len(batch_pages)},
             )
             normalized_paths = [p.normalized_path for p in batch_pages]
-            result = self._runner.run_batch(normalized_paths)
-            all_markdown_parts.append(result.markdown)
-            all_pages_processed += result.page_separators or len(batch_pages)
+            
+            final_raw_text = ""
+            for partial_text, status in self._runner.run_batch_iter(normalized_paths):
+                if status == "running":
+                    chunk = partial_text[-500:] if len(partial_text) > 500 else partial_text
+                    yield ProgressEvent(
+                        phase="ocr",
+                        message=f"OCR batch pagine {batch_start+1}-{batch_end}/{total_pages}\n\n[Testo estratto in tempo reale]:\n{chunk}",
+                        current=batch_start + 1, total=total_pages,
+                        percent=(batch_end / total_pages) * 100.0,
+                        extra={"batch_size": len(batch_pages)},
+                    )
+                else:
+                    final_raw_text = partial_text
+                    
+            raw_text = final_raw_text.strip()
+            markdown = self._runner._strip_image_tokens(raw_text)
+            all_markdown_parts.append(markdown)
+            all_pages_processed += raw_text.count("<page>") or len(batch_pages)
             # Le BBox arrivano nel raw_text; le estraiamo ora (lazy)
-            page_bboxes: list[BBox] = extract_bbox_tokens(result.raw_text)
+            page_bboxes: list[BBox] = extract_bbox_tokens(raw_text)
             # Distribuisci uniformemente le bbox sulle pagine del batch
             per_page: list[list[BBox]] = [[] for _ in batch_pages]
             if page_bboxes:
