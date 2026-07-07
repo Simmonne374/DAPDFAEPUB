@@ -75,6 +75,11 @@ _HEADING_PATTERN = re.compile(
 
 def _check_pandoc() -> str:
     """Verifica che pandoc sia installato e ritorna il path."""
+    try:
+        import pypandoc
+        return pypandoc.get_pandoc_path()
+    except Exception:
+        pass
     pandoc = shutil.which("pandoc")
     if pandoc is None:
         raise RuntimeError(
