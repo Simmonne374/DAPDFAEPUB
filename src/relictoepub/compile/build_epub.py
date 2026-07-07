@@ -69,7 +69,7 @@ class BookMetadata:
 
 
 _HEADING_PATTERN = re.compile(
-    r"^(?:(#)\s+(.+?)|<!-- pagebreak -->)\s*$", re.MULTILINE
+    r"^<!-- pagebreak -->$", re.MULTILINE
 )
 
 
@@ -106,11 +106,9 @@ def _convert_markdown_to_xhtml(markdown: str) -> str:
 
 
 def _split_into_chapters(markdown: str) -> list[dict]:
-    """Divide il Markdown in capitoli logici sui tag ``h1``/``h2`` o pagebreak.
+    """Divide il Markdown in capitoli logici solo sui tag pagebreak.
 
     Restituisce una lista di dict ``{"level", "title", "body"}``.
-    L'intestazione iniziale (prima di qualunque match) diventa
-    un capitolo *frontmatter* con titolo vuoto.
     """
     matches = list(_HEADING_PATTERN.finditer(markdown))
     if not matches:
@@ -125,29 +123,15 @@ def _split_into_chapters(markdown: str) -> list[dict]:
 
     for i, match in enumerate(matches):
         next_start = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
-        heading_line = match.group(0)
         body = markdown[match.end() : next_start].strip()
         
-        if match.group(1) is not None:
-            # È un'intestazione H1/H2
-            chapters.append(
-                {
-                    "level": len(match.group(1)),
-                    "title": match.group(2).strip(),
-                    "body": body,
-                    # Conservo la riga heading per pypandoc — essa produce <h1>/<h2>
-                    "_raw_heading": heading_line,
-                }
-            )
-        else:
-            # È un pagebreak
-            chapters.append(
-                {
-                    "level": 1,
-                    "title": "",
-                    "body": body,
-                }
-            )
+        chapters.append(
+            {
+                "level": 1,
+                "title": "",
+                "body": body,
+            }
+        )
     return chapters
 
 
@@ -276,15 +260,22 @@ def build_epub(
     chapters_raw = _split_into_chapters(markdown)
     chapters: list[ChapterInfo] = []
     for i, raw in enumerate(chapters_raw):
+        body = raw.get("body", "")
+        # Cerca un titolo H1/H2/H3 nel body della pagina per la TOC
+        title = ""
+        h_match = re.search(r"^(#{1,3})\s+(.+?)\s*$", body, re.MULTILINE)
+        if h_match:
+            title = h_match.group(2).strip()
+            
         xhtml = _chapter_xhtml(
-            title=raw.get("title", ""),
-            body_markdown=raw.get("body", ""),
+            title="",  # non generiamo un titolo H1 duplicato in testa al file
+            body_markdown=body,
             level=raw.get("level", 1),
         )
         xhtml = _inject_responsive_images(xhtml)
         chapters.append(
             ChapterInfo(
-                title=raw.get("title") or f"Sezione {i+1}",
+                title=title or f"Pagina {i+1}",
                 level=raw.get("level", 1),
                 filename=f"chap_{i+1:04d}.xhtml",
                 xhtml=xhtml,
