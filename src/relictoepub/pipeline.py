@@ -244,8 +244,9 @@ class Pipeline:
                     if label in ("image", "figure", "table"):
                         img_label = f"{label}{img_counter}"
                         img_counter += 1
-                        out_filename = f"page{page.page_num:04d}_{img_label}.png"
-                        out_path = crops_dir / out_filename
+                        ext = ".webp" if self.eink_optimize else ".png"
+                        out_filename = f"page{page.page_num:04d}_{img_label}{ext}"
+                        out_path = crops_dir / f"page{page.page_num:04d}_{img_label}.png"
                         
                         result_path = crop_image_from_bbox(
                             page.original_path, bbox, output_path=out_path
@@ -259,7 +260,7 @@ class Pipeline:
                     elif label == "subtitle":
                         return "\n\n## "
                         
-                    return ""
+                    return "\n\n"
                 
                 page_markdown = det_pattern.sub(replace_tag, page_text)
                 page_markdown = self._runner._strip_image_tokens(page_markdown)
