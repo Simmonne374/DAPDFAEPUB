@@ -26,9 +26,9 @@ dependencies = [
   # Gradio UI
   "gradio>=5.0.0,<6.0.0",
   # Added dependencies
-  "addict",
-  "matplotlib",
-  "torchvision",
+  "addict>=2.4.0,<3.0.0",
+  "matplotlib>=3.8.0,<4.0.0",
+  "torchvision>=0.18.0,<0.23.0",
 ]
 
 [project.optional-dependencies]
