@@ -57,20 +57,24 @@ class BBox:
 
     @classmethod
     def from_string(cls, raw: str) -> "BBox":
-        """Parsa una stringa tipo ``"<|bbox|x1|y1|x2|y2|label|>"``.
-
-        Formato ispirato ai tag speciali di Unlimited-OCR (vedi paper §4.1).
-        Se il formato non corrisponde, solleva ``ValueError``.
-        """
-        # Robusto contro variazioni di spaziatura e casing
+        """Parsa una stringa tipo "<|det|>label [x1, y1, x2, y2]<|/det|>" o "<|bbox|...>"."""
         match = re.search(
-            r"<\|bbox\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*(?:\|\s*([^|>\s]+)\s*)?\|?>",
-            raw,
+            r"<\|det\|>([^\[]+)\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]<\|/det\|>",
+            raw
         )
         if not match:
-            raise ValueError(f"Formato BBox non riconosciuto: {raw!r}")
-        x1, y1, x2, y2 = (int(g) for g in match.groups()[:4])
-        label = (match.group(5) or "").strip()
+            match = re.search(
+                r"<\|bbox\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*(?:\|\s*([^|>\s]+)\s*)?\|?>",
+                raw,
+            )
+            if not match:
+                raise ValueError(f"Formato BBox non riconosciuto: {raw!r}")
+            x1, y1, x2, y2 = (int(g) for g in match.groups()[:4])
+            label = (match.group(5) or "").strip()
+            return cls(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label)
+            
+        label = match.group(1).strip()
+        x1, y1, x2, y2 = (int(g) for g in match.groups()[1:5])
         return cls(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label)
 
 
@@ -163,7 +167,7 @@ def crop_image_from_bbox(
 
 
 def extract_bbox_tokens(ocr_text: str) -> list[BBox]:
-    """Estrae tutti i tag BBox dal testo OCR.
+    """Estrae tutti i tag BBox/Det dal testo OCR.
 
     Args:
         ocr_text: Testo emesso da Unlimited-OCR con ``skip_special_tokens=False``.
@@ -172,19 +176,26 @@ def extract_bbox_tokens(ocr_text: str) -> list[BBox]:
         Lista di :class:`BBox` trovati. Silenziosamente scarta i tag
         malformati (li logga a livello DEBUG).
     """
-    pattern = re.compile(
+    results: list[BBox] = []
+    
+    # 1. Cerca tag <|det|>
+    det_pattern = re.compile(
+        r"<\|det\|>([^\[]+)\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]<\|/det\|>"
+    )
+    for match in det_pattern.finditer(ocr_text):
+        label = match.group(1).strip()
+        x1, y1, x2, y2 = (int(g) for g in match.groups()[1:5])
+        results.append(BBox(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label))
+        
+    # 2. Cerca tag <|bbox|> (fallback)
+    bbox_pattern = re.compile(
         r"<\|bbox\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*(?:\|\s*([^|>\s]+)\s*)?\|?>"
     )
-    results: list[BBox] = []
-    for match in pattern.finditer(ocr_text):
+    for match in bbox_pattern.finditer(ocr_text):
         x1, y1, x2, y2 = (int(g) for g in match.groups()[:4])
         label = (match.group(5) or "").strip()
-        try:
-            results.append(
-                BBox(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label)
-            )
-        except ValueError:
-            continue
+        results.append(BBox(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label))
+        
     return results
 
 

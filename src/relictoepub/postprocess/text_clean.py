@@ -63,6 +63,10 @@ def clean_text(text: str, *, fix_hyphenation: bool = True, normalize_quotes: boo
         # newline come singolo spazio, pypandoc gestirà la spaziatura
         text = re.sub(r"(?<=\S)\n(?=\S)", " ", text)
 
+    # Rimuovi tag di det/bbox residui (difesa)
+    text = re.sub(r"<\|det\|>.*?\[.*?\]<\|/det\|>", "", text)
+    text = re.sub(r"<\|bbox\|.*?\|>", "", text)
+
     # Collassa 3+ newline in 2 (per separare i paragrafi in Markdown)
     text = _MULTI_NEWLINE.sub("\n\n", text)
     # Rimuovi spazi trailing prima di newline

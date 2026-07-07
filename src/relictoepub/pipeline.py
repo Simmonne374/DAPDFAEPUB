@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -178,8 +179,11 @@ class Pipeline:
         if self._runner is None:
             self._runner = UnlimitedOCRRunner(self.inference_config)
         all_markdown_parts: list[str] = []
-        all_bboxes_per_page: list[list[BBox]] = []
         all_pages_processed = 0
+
+        crops_dir = ingest_result.output_dir / "crops"
+        crops_dir.mkdir(exist_ok=True)
+        saved_crops: list[Path] = []
 
         for batch_start in range(0, total_pages, self.max_pages_per_batch):
             batch_end = min(batch_start + self.max_pages_per_batch, total_pages)
@@ -208,20 +212,61 @@ class Pipeline:
                     final_raw_text = partial_text
                     
             raw_text = final_raw_text.strip()
-            markdown = self._runner._strip_image_tokens(raw_text)
-            all_markdown_parts.append(markdown)
-            all_pages_processed += raw_text.count("<page>") or len(batch_pages)
-            # Le BBox arrivano nel raw_text; le estraiamo ora (lazy)
-            page_bboxes: list[BBox] = extract_bbox_tokens(raw_text)
-            # Distribuisci uniformemente le bbox sulle pagine del batch
-            per_page: list[list[BBox]] = [[] for _ in batch_pages]
-            if page_bboxes:
-                # euristica: divide in modo equo se il numero non corrisponde
-                per_chunk = max(1, len(page_bboxes) // len(batch_pages))
-                for i, bbox in enumerate(page_bboxes):
-                    target_idx = min(i // per_chunk, len(batch_pages) - 1)
-                    per_page[target_idx].append(bbox)
-            all_bboxes_per_page.extend(per_page)
+            
+            # Dividi l'output grezzo per pagina
+            pages_raw = re.split(r"(?i)<page>", raw_text)
+            if pages_raw and not pages_raw[0].strip():
+                pages_raw = pages_raw[1:]
+                
+            batch_markdown_parts = []
+            for idx, page in enumerate(batch_pages):
+                page_text = pages_raw[idx] if idx < len(pages_raw) else ""
+                
+                # Rimuoviamo piè di pagina, numeri di pagina e intestazioni completi (tag + testo sulla stessa riga)
+                page_text = re.sub(
+                    r"<\|det\|>(?:footer|page_number|header)\[[^\]]+\]<\|/det\|>[^\n]*",
+                    "",
+                    page_text
+                )
+                
+                # Trova tutti i tag di det su questa pagina
+                det_pattern = re.compile(
+                    r"<\|det\|>([^\[]+)\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]<\|/det\|>"
+                )
+                
+                img_counter = 0
+                def replace_tag(match):
+                    nonlocal img_counter
+                    label = match.group(1).strip()
+                    x1, y1, x2, y2 = (int(g) for g in match.groups()[1:5])
+                    bbox = BBox(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label)
+                    
+                    if label in ("image", "figure", "table"):
+                        img_label = f"{label}{img_counter}"
+                        img_counter += 1
+                        out_filename = f"page{page.page_num:04d}_{img_label}.png"
+                        out_path = crops_dir / out_filename
+                        
+                        result_path = crop_image_from_bbox(
+                            page.original_path, bbox, output_path=out_path
+                        )
+                        if result_path and result_path.exists():
+                            saved_crops.append(result_path)
+                            return f"\n\n![](images/{out_filename})\n\n"
+                    
+                    elif label in ("title", "heading"):
+                        return "\n\n# "
+                    elif label == "subtitle":
+                        return "\n\n## "
+                        
+                    return ""
+                
+                page_markdown = det_pattern.sub(replace_tag, page_text)
+                page_markdown = self._runner._strip_image_tokens(page_markdown)
+                batch_markdown_parts.append(page_markdown)
+                
+            all_markdown_parts.extend(batch_markdown_parts)
+            all_pages_processed += len(batch_pages)
 
         full_markdown = "\n\n".join(all_markdown_parts)
 
@@ -230,19 +275,6 @@ class Pipeline:
         cleaned = clean_text(full_markdown)
 
         # 4) Crop immagini
-        yield ProgressEvent(phase="cropping", message="Ritaglio immagini…")
-        crops_dir = ingest_result.output_dir / "crops"
-        crops_dir.mkdir(exist_ok=True)
-        saved_crops: list[Path] = []
-        for page, bboxes in zip(ingest_result.pages, all_bboxes_per_page):
-            for j, bbox in enumerate(bboxes):
-                label = bbox.label or f"asset{j:02d}"
-                out = crops_dir / f"page{page.page_num:04d}_{label}.png"
-                result_path = crop_image_from_bbox(
-                    page.original_path, bbox, output_path=out
-                )
-                if result_path is not None:
-                    saved_crops.append(result_path)
         yield ProgressEvent(
             phase="cropping",
             message=f"Ritagliate {len(saved_crops)} immagini",
