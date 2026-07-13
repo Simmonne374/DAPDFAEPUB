@@ -71,10 +71,18 @@ jobs:
           if (Test-Path "$dest\ISCC.exe") {
             Write-Host "ISCC already present in $dest - skipping download"
           } else {
-            $url = "https://jrsoftware.org/download.php/is-x64.exe"
-            $installer = "$env:TEMP\innosetup-installer.exe"
-            Write-Host "Downloading Inno Setup 6 portable installer..."
-            Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+                  # Direct GitHub Releases URL of the official jrsoftware/issrc
+                  # repository: this is the actual .exe binary (no HTML landing page,
+                  # no PHP redirect that Invoke-WebRequest fails to follow).
+                  $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+                  $installer = "$env:TEMP\innosetup-installer.exe"
+                  Write-Host "Downloading Inno Setup 6.7.3 from $url ..."
+                  Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+                  $size = (Get-Item $installer).Length
+                  Write-Host "Downloaded: $size bytes"
+                  if ($size -lt 1MB) {
+                    throw "Inno Setup installer looks too small ($size bytes) — download probably failed."
+                  }
                   # Pre-build the argument list (avoids Start-Process parser quirks
                   # with "+ $dest" after a backtick line-continuation).
                   $dirArg = "/DIR=$dest"
