@@ -79,29 +79,29 @@ jobs:
           if (Test-Path "$dest\ISCC.exe") {
             Write-Host "ISCC already present in $dest - skipping download"
           } else {
-                  # Direct GitHub Releases URL of the official jrsoftware/issrc
-                  # repository: this is the actual .exe binary (no HTML landing page,
-                  # no PHP redirect that Invoke-WebRequest fails to follow).
-                  $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
-                  $installer = "$env:TEMP\innosetup-installer.exe"
-                  Write-Host "Downloading Inno Setup 6.7.3 from $url ..."
-                  Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
-                  $size = (Get-Item $installer).Length
-                  Write-Host "Downloaded: $size bytes"
-                  if ($size -lt 1MB) {
-                    throw "Inno Setup installer looks too small ($size bytes) — download probably failed."
-                  }
-                  # Pre-build the argument list (avoids Start-Process parser quirks
-                  # with "+ $dest" after a backtick line-continuation).
-                  $dirArg = "/DIR=$dest"
-                  $args = @("/SP-","/VERYSILENT","/SUPPRESSMSGBOXES","/CURRENTUSER","/NORESTART",$dirArg)
-                  $proc = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
-                  if ($proc.ExitCode -ne 0) {
-                    throw "Inno Setup install failed (exit $($proc.ExitCode))"
-                  }
-                }
-                Write-Host "ISCC ready at $dest\ISCC.exe"
-                "ISCC=$dest\ISCC.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+            # Direct GitHub Releases URL of the official jrsoftware/issrc
+            # repository: this is the actual .exe binary (no HTML landing page,
+            # no PHP redirect that Invoke-WebRequest fails to follow).
+            $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+            $installer = "$env:TEMP\innosetup-installer.exe"
+            Write-Host "Downloading Inno Setup 6.7.3 from $url ..."
+            Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+            $size = (Get-Item $installer).Length
+            Write-Host "Downloaded: $size bytes"
+            if ($size -lt 1MB) {
+              throw "Inno Setup installer looks too small ($size bytes) — download probably failed."
+            }
+            # Pre-build the argument list (avoids Start-Process parser quirks
+            # with "+ $dest" after a backtick line-continuation).
+            $dirArg = "/DIR=$dest"
+            $args = @("/SP-","/VERYSILENT","/SUPPRESSMSGBOXES","/CURRENTUSER","/NORESTART",$dirArg)
+            $proc = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
+            if ($proc.ExitCode -ne 0) {
+              throw "Inno Setup install failed (exit $($proc.ExitCode))"
+            }
+          }
+          Write-Host "ISCC ready at $dest\ISCC.exe"
+          "ISCC=$dest\ISCC.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build installer (PyInstaller + Inno Setup)
         id: build
@@ -156,6 +156,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $tag   = "build-${{ github.sha }}"
           $title = "RelicToEpub build ${{ github.sha }}"
+          $sizeMB = [math]::Round($env:INSTALLER_SIZE / 1MB, 1)
           $body  = @"
           ## Build `${{ github.sha }}
 
@@ -165,7 +166,7 @@ jobs:
           - Workflow: `${{ github.workflow }} @ `${{ github.run_id }}
           - Date:     `${{ github.event.head_commit.timestamp }}
 
-          Installer: `${{ env.INSTALLER_NAME }}  ($([math]::Round(`${{ env.INSTALLER_SIZE }}/1MB, 1)) MB)
+          Installer: `${{ env.INSTALLER_NAME }}  ($sizeMB MB)
           "@
           $existing = gh release view $tag --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) {
@@ -174,17 +175,17 @@ jobs:
             gh release edit  $tag --title $title --notes $body | Out-Null
           } else {
             Write-Host "Creating new draft release $tag"
-                      $ghArgs = @(
-                        $tag,
-                        $env:INSTALLER_PATH,
-                        "--title", $title,
-                        "--notes", $body,
-                        "--draft",
-                        "--target", "${{ github.sha }}"
-                      )
-                      gh release create @ghArgs | Out-Null
-                    }
-                    if ($LASTEXITCODE -ne 0) { throw "gh release (build-sha) failed" }
+            $ghArgs = @(
+              $tag,
+              $env:INSTALLER_PATH,
+              "--title", $title,
+              "--notes", $body,
+              "--draft",
+              "--target", "${{ github.sha }}"
+            )
+            gh release create @ghArgs | Out-Null
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release (build-sha) failed" }
 
       # --------------------------------------------------------------
       # Mantiene una release rolling latest sempre aggiornata.
@@ -197,6 +198,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $tag  = "latest"
+          $sizeMB = [math]::Round($env:INSTALLER_SIZE / 1MB, 1)
           $body = @"
           ## Latest build from master
 
@@ -204,7 +206,7 @@ jobs:
           - Built:   `${{ github.event.head_commit.timestamp }}
           - Run:     `${{ github.run_id }}
 
-          Installer: `${{ env.INSTALLER_NAME }}  ($([math]::Round(`${{ env.INSTALLER_SIZE }}/1MB, 1)) MB)
+          Installer: `${{ env.INSTALLER_NAME }}  ($sizeMB MB)
           "@
           $existing = gh release view $tag --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) {
@@ -213,13 +215,13 @@ jobs:
             gh release edit  $tag --notes $body | Out-Null
           } else {
             Write-Host "Creating rolling release $tag"
-                      $ghArgs = @(
-                        $tag,
-                        $env:INSTALLER_PATH,
-                        "--title", "RelicToEpub (latest rolling)",
-                        "--notes", $body,
-                        "--target", "${{ github.sha }}"
-                      )
-                      gh release create @ghArgs | Out-Null
-                    }
-                    if ($LASTEXITCODE -ne 0) { throw "gh release (latest) failed" }
+            $ghArgs = @(
+              $tag,
+              $env:INSTALLER_PATH,
+              "--title", "RelicToEpub (latest rolling)",
+              "--notes", $body,
+              "--target", "${{ github.sha }}"
+            )
+            gh release create @ghArgs | Out-Null
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release (latest) failed" }
