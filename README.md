@@ -1,8 +1,14 @@
 # RelicToEpub
 
+[![Build Windows installer](https://github.com/Simmonne374/DAPDFAEPUB/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Simmonne374/DAPDFAEPUB/actions/workflows/build-windows.yml)
+[![Latest release](https://img.shields.io/github/v/release/Simmonne374/DAPDFAEPUB?label=latest)](https://github.com/Simmonne374/DAPDFAEPUB/releases/tag/latest)
+
 > Pipeline PDF → EPUB3 basata su **Baidu Unlimited-OCR** (R-SWA architecture)
 >
 > Wrapper Python leggero attorno al modello SOTA open-source per il document parsing.
+
+Scarica l'ultimo installer Windows dalla [pagina Releases](../../releases) (tag `latest`,
+oppure scegli uno specifico `build-<commit>` per una build puntuale).
 
 ---
 
