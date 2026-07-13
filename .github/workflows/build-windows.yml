@@ -1,0 +1,199 @@
+name: Build Windows installer
+
+# ---------------------------------------------------------------------------
+# Pipeline CI per RelicToEpub.
+#
+# Trigger:  ogni push a master (anche dopo merge di PR).
+#           Avviabile anche manualmente da Actions -> Run workflow.
+#
+# Risultato:
+#   1) workflow artifact: installer .exe scaricabile dalla run page
+#   2) draft release: tag build-<short-sha> con installer allegato
+#   3) release rolling latest: installer aggiornato ad ogni merge
+# ---------------------------------------------------------------------------
+
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Evita run concorrenti.
+concurrency:
+  group: build-windows-master
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build-windows-installer:
+    name: Build RelicToEpub-Setup.exe on Windows
+    runs-on: windows-latest
+    timeout-minutes: 240
+
+    env:
+      PYTHON_VERSION: '3.11'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+
+      - name: Show Python and pip versions
+        shell: pwsh
+        run: |
+          python --version
+          python -m pip --version
+
+      - name: Install build and runtime dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[pkg]"
+
+      - name: Install Inno Setup 6 (ISCC)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dest = "C:\InnoSetup6"
+          if (Test-Path "$dest\ISCC.exe") {
+            Write-Host "ISCC already present in $dest - skipping download"
+          } else {
+            $url = "https://jrsoftware.org/download.php/is-x64.exe"
+            $installer = "$env:TEMP\innosetup-installer.exe"
+            Write-Host "Downloading Inno Setup 6 portable installer..."
+            Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+            $proc = Start-Process -FilePath $installer `
+              -ArgumentList "/SP-","/VERYSILENT","/SUPPRESSMSGBOXES","/CURRENTUSER","/NORESTART","/DIR=" + $dest `
+              -Wait -PassThru
+            if ($proc.ExitCode -ne 0) {
+              throw "Inno Setup install failed (exit $($proc.ExitCode))"
+            }
+          }
+          Write-Host "ISCC ready at $dest\ISCC.exe"
+          "ISCC=$dest\ISCC.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build installer (PyInstaller + Inno Setup)
+        id: build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:ISCC = "C:\InnoSetup6\ISCC.exe"
+          & .\build\build_windows.ps1
+          if ($LASTEXITCODE -ne 0) { throw "build_windows.ps1 exit $LASTEXITCODE" }
+
+      - name: Locate installer artifact
+        id: locate
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path .\Output -Filter "RelicToEpub-Setup-*.exe" -File | Select-Object -First 1
+          if (-not $installer) { throw "Installer not found in .\Output" }
+          Write-Host "Installer: $($installer.FullName) ($([math]::Round($installer.Length/1MB,1)) MB)"
+          "INSTALLER_PATH=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "INSTALLER_NAME=$($installer.Name)"     | Out-File -FilePath $env:GITHUB_ENV -Append
+          "INSTALLER_SIZE=$($installer.Length)"   | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload installer as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RelicToEpub-Setup
+          path: ${{ env.INSTALLER_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs for debugging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RelicToEpub-build-logs
+          path: |
+            build_boot.log
+            build_app.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # --------------------------------------------------------------
+      # Crea (o aggiorna) una draft release con tag build-<short_sha>.
+      # In questo modo ogni merge in master produce un link permanente
+      # da cui scaricare l installer di quella specifica build.
+      # --------------------------------------------------------------
+      - name: Create or update draft release for this commit
+        if: startsWith(github.ref, 'refs/heads/master')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag   = "build-${{ github.sha }}"
+          $title = "RelicToEpub build ${{ github.sha }}"
+          $body  = @"
+          ## Build `${{ github.sha }}
+
+          - Branch:   `${{ github.ref_name }}
+          - Commit:   `${{ github.sha }}
+          - Author:   `${{ github.actor }}
+          - Workflow: `${{ github.workflow }} @ `${{ github.run_id }}
+          - Date:     `${{ github.event.head_commit.timestamp }}
+
+          Installer: `${{ env.INSTALLER_NAME }}  ($([math]::Round(`${{ env.INSTALLER_SIZE }}/1MB, 1)) MB)
+          "@
+          $existing = gh release view $tag --json tagName 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag exists - updating asset"
+            gh release upload $tag $env:INSTALLER_PATH --clobber | Out-Null
+            gh release edit  $tag --title $title --notes $body | Out-Null
+          } else {
+            Write-Host "Creating new draft release $tag"
+            gh release create $tag $env:INSTALLER_PATH `
+              --title $title `
+              --notes $body `
+              --draft `
+              --target ${{ github.sha }} | Out-Null
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release (build-sha) failed" }
+
+      # --------------------------------------------------------------
+      # Mantiene una release rolling latest sempre aggiornata.
+      # --------------------------------------------------------------
+      - name: Update "latest" rolling release
+        if: startsWith(github.ref, 'refs/heads/master')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag  = "latest"
+          $body = @"
+          ## Latest build from master
+
+          - Commit:  `${{ github.sha }}
+          - Built:   `${{ github.event.head_commit.timestamp }}
+          - Run:     `${{ github.run_id }}
+
+          Installer: `${{ env.INSTALLER_NAME }}  ($([math]::Round(`${{ env.INSTALLER_SIZE }}/1MB, 1)) MB)
+          "@
+          $existing = gh release view $tag --json tagName 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag exists - updating asset"
+            gh release upload $tag $env:INSTALLER_PATH --clobber | Out-Null
+            gh release edit  $tag --notes $body | Out-Null
+          } else {
+            Write-Host "Creating rolling release $tag"
+            gh release create $tag $env:INSTALLER_PATH `
+              --title "RelicToEpub (latest rolling)" `
+              --notes $body `
+              --target ${{ github.sha }} | Out-Null
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release (latest) failed" }
