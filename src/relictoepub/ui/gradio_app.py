@@ -172,69 +172,42 @@ def _run_pipeline(
         yield base_log_text, gallery, None, gr.update()
 
 
-def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component]]:
-    """Avvia il download del modello Unlimited-OCR tramite subprocess.
-    
-    Yields tuple (log_text, model_status_text, download_button_update).
+def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr.update]]:
+    """Avvia il download del modello Unlimited-OCR via ``huggingface_hub.snapshot_download``.
+
+    Usa ``gr.Progress(track_tqdm=True)`` per mostrare filename + % live.
+    Yields tuple (log_text, model_status_text, download_button_update, progress_update).
     """
-    log_text = "🔄 Inizio download del modello 'baidu/Unlimited-OCR' (circa 6 GB)..."
-    yield log_text, "⏳ **Download in corso...**", gr.Button(interactive=False)
-    
-    # Trova il percorso dell'eseguibile huggingface-cli
-    cli_path = Path(sys.executable).parent / "huggingface-cli"
-    if sys.platform == "win32" or cli_path.with_suffix(".exe").exists():
-        cli_path = cli_path.with_suffix(".exe")
-    if not cli_path.exists():
-        cli_path = Path("huggingface-cli")  # fallback
-        
-    cmd = [
-        str(cli_path), "download", "baidu/Unlimited-OCR",
-        "--include", "*.safetensors", "--include", "*.json", "--include", "*.py",
-        "--include", "*.txt", "--include", "*.bin", "--include", "*.md",
-        "--quiet"
-    ]
-    
-    process = None
+    log_text = "🔄 Inizio download del modello 'baidu/Unlimited-OCR' (~6 GB)."
+    log_text += "\n\nRestando in questa pagina vedrai i file scaricati uno per uno."
+    yield log_text, "⏳ **Download in corso...**", gr.Button(interactive=False), gr.update(visible=True, value=0, label="Download modello…")
+
     try:
-        env = os.environ.copy()
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONUTF8"] = "1"
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
-            env=env
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        log_text += "\n\n❌ `huggingface_hub` non installato. Installazione automatica…"
+        yield log_text, "🔴 **Dipendenza mancante**", gr.Button(interactive=True), gr.update(label="Errore")
+        return
+
+    progress = gr.Progress(track_tqdm=True)
+    try:
+        path = snapshot_download(
+            repo_id="baidu/Unlimited-OCR",
+            allow_patterns=[
+                "*.json", "*.py", "*.txt", "*.md", "*.model",
+                "*.safetensors", "*.bin",
+                "tokenizer*", "vocab.*", "merges.*", "special_tokens*",
+            ],
+            tqdm_class=None,  # gradio traccia già la tqdm di default
         )
-        
-        # Legge lo standard output del processo riga per riga
-        for line in iter(process.stdout.readline, ""):
-            log_text = (log_text + "\n" + line.strip()).strip()
-            yield log_text, "⏳ **Download in corso...**", gr.Button(interactive=False)
-            
-        process.wait()
-        if process.returncode == 0:
-            log_text += "\n\n✅ Modello scaricato e verificato con successo!"
-            _, status_str = check_model_status()
-            yield log_text, status_str, gr.Button(interactive=True)
-        else:
-            log_text += f"\n\n❌ Errore durante il download del modello. Codice d'uscita: {process.returncode}"
-            yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True)
-    except Exception as e:
-        log_text += f"\n\n❌ Errore imprevisto durante l'avvio del download: {e}"
-        yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True)
-    finally:
-        if process is not None and process.poll() is None:
-            try:
-                process.terminate()
-                process.wait(timeout=5)
-            except Exception:
-                try:
-                    process.kill()
-                except Exception:
-                    pass
+    except Exception as exc:  # noqa: BLE001
+        log_text += f"\n\n❌ Download fallito: {exc}"
+        yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True), gr.update(visible=True, label="Riprova download")
+        return
+
+    log_text += f"\n\n✅ Modello scaricato in cache HuggingFace.\nPath: {path}"
+    _, status_str = check_model_status()
+    yield log_text, status_str, gr.Button(interactive=True), gr.update(visible=True, label="Modello scaricato", value=1.0)
 
 
 def build_demo() -> gr.Blocks:
@@ -289,7 +262,7 @@ def build_demo() -> gr.Blocks:
         download_btn.click(
             fn=_download_model_ui,
             inputs=[],
-            outputs=[log, model_status, download_btn],
+            outputs=[log, model_status, download_btn, download_btn],
         )
 
         # Wiring: click → streaming updates su log, gallery, download, status

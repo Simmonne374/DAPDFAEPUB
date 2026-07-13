@@ -62,6 +62,60 @@ class ProgressEvent:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+class ModelNotFoundError(RuntimeError):
+    """Eccezione tipizzata sollevata quando il modello Unlimited-OCR non è stato
+    scaricato nella cache locale di HuggingFace.
+
+    Attributes:
+        model_id: identificativo HuggingFace del modello mancante.
+        cache_dir: directory di cache attesa.
+    """
+
+    def __init__(self, model_id: str, cache_dir: Path | None = None) -> None:
+        self.model_id = model_id
+        self.cache_dir = cache_dir
+        cache_hint = f" (cache: {cache_dir})" if cache_dir else ""
+        super().__init__(
+            f"Modello '{model_id}' non trovato nella cache HuggingFace{cache_hint}. "
+            f"Scaricalo con `python scripts/download_model.py` oppure tramite il "
+            f"pulsante 'Scarica modello' nella UI Gradio."
+        )
+
+
+def check_model_available(model_id: str = "baidu/Unlimited-OCR") -> bool:
+    """Controlla se il modello è presente nella cache di HuggingFace.
+
+    Usa :func:`huggingface_hub.try_to_load_from_cache` per ogni file
+    ``*.safetensors``: se nessun file è disponibile localmente, il modello
+    è considerato assente.
+
+    Args:
+        model_id: ID HuggingFace del modello. Default ``"baidu/Unlimited-OCR"``.
+
+    Returns:
+        ``True`` se almeno un file ``.safetensors`` è in cache, ``False`` altrimenti.
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        # huggingface-hub non installato: trattiamo il modello come non disponibile
+        return False
+
+    try:
+        # Cerca i file più comuni; il primo match positivo indica presenza
+        for pattern in ("*.safetensors", "*.bin"):
+            result = try_to_load_from_cache(model_id, pattern)
+            # result è None se non trovato, oppure (path, etag) se cached
+            if result is not None:
+                path_or_tuple = result if isinstance(result, tuple) else (result,)
+                if path_or_tuple and path_or_tuple[0] is not None:
+                    return True
+    except Exception:
+        # Qualsiasi errore (modello non esistente, no internet, ecc.) → non disponibile
+        return False
+    return False
+
+
 @dataclass
 class PipelineResult:
     """Risultato finale di una conversione."""
@@ -340,4 +394,10 @@ class Pipeline:
         )
 
 
-__all__ = ["Pipeline", "PipelineResult", "ProgressEvent"]
+__all__ = [
+    "Pipeline",
+    "PipelineResult",
+    "ProgressEvent",
+    "ModelNotFoundError",
+    "check_model_available",
+]

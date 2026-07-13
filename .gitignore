@@ -7,10 +7,25 @@ __pycache__/
 *.egg-info/
 .eggs/
 dist/
-build/
+build/launchers/__pycache__/
+build/hooks/__pycache__/
+build/build/
+build/relictoepub/
+build/relictoepub_boot/
+build/_work_app/
+build/_work_boot/
 .venv/
 venv/
 env/
+
+# Traccia esplicitamente i file di build che vanno committati
+!build/*.spec
+!build/*.py
+!build/*.iss
+!build/*.ps1
+!build/*.ico
+!build/hooks/
+!build/launchers/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
@@ -29,7 +44,9 @@ htmlcov/
 
 # Outputs
 output/*
+Output/*
 !output/.gitkeep
+!Output/.gitkeep
 samples/*.pdf
 !samples/.gitkeep
 

@@ -24,7 +24,12 @@ sys.path.insert(0, str(PROJECT_ROOT))  # fallback per compatibilità
 
 from relictoepub.compile.build_epub import BookMetadata  # noqa: E402
 from relictoepub.inference.config import InferenceConfig, QuantizationMode  # noqa: E402
-from relictoepub.pipeline import Pipeline, ProgressEvent  # noqa: E402
+from relictoepub.pipeline import (  # noqa: E402
+    ModelNotFoundError,
+    Pipeline,
+    ProgressEvent,
+    check_model_available,
+)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -86,6 +91,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"File non trovato: {args.input}", file=sys.stderr)
         return 2
 
+    # Controlla preventivamente che il modello OCR sia in cache HF.
+    # In caso contrario, evita un crash tardivo e mostra istruzioni chiare.
+    if not check_model_available():
+        print("⚠️  Modello 'baidu/Unlimited-OCR' non trovato nella cache HuggingFace.", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Per scaricarlo (~6 GB), esegui:", file=sys.stderr)
+        print("    python scripts/download_model.py", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Oppure aprì la UI Gradio e usa il pulsante 'Scarica modello'.", file=sys.stderr)
+        return 3
+
     output_epub = args.output or args.input.with_suffix(".epub")
     metadata = BookMetadata(
         title=args.title or args.input.stem,
@@ -109,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nInterrotto dall'utente.", file=sys.stderr)
         return 130
+    except ModelNotFoundError as exc:
+        print(f"⚠️  {exc}", file=sys.stderr)
+        return 3
     except Exception as exc:
         print(f"Conversione fallita: {exc}", file=sys.stderr)
         logging.exception("Dettaglio errore")
