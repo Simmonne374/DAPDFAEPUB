@@ -52,18 +52,18 @@ jobs:
             pyproject.toml
 
       - name: Show Python and pip versions
-              id: python-info
-              shell: pwsh
-              run: |
-                python --version
-                python -m pip --version
-                # The runner also has Python 3.13 preinstalled in PATH, so we must
-                # pin PYTHON_BIN to the exact interpreter where we just installed
-                # PyInstaller (otherwise build_windows.ps1 auto-detects 3.13 first
-                # and fails with "No module named PyInstaller").
-                $pyExe = (python -c "import sys; print(sys.executable)").Trim()
-                Write-Host "Pinned PYTHON_BIN=$pyExe"
-                "PYTHON_BIN=$pyExe" | Out-File -FilePath $env:GITHUB_ENV -Append
+        id: python-info
+        shell: pwsh
+        run: |
+          python --version
+          python -m pip --version
+          # The runner also has Python 3.13 preinstalled in PATH, so we must
+          # pin PYTHON_BIN to the exact interpreter where we just installed
+          # PyInstaller (otherwise build_windows.ps1 auto-detects 3.13 first
+          # and fails with "No module named PyInstaller").
+          $pyExe = (python -c "import sys; print(sys.executable)").Trim()
+          Write-Host "Pinned PYTHON_BIN=$pyExe"
+          "PYTHON_BIN=$pyExe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install build and runtime dependencies
         shell: pwsh
