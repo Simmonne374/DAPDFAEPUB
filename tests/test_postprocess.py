@@ -41,10 +41,15 @@ def test_bbox_from_string_malformed() -> None:
 
 
 def test_denormalize_bbox_basic() -> None:
-    """1000-based normalizzata → pixel semplice."""
-    bbox = BBox(0, 0, 1000, 1000)
-    pixel_box = denormalize_bbox(bbox, (800, 600))
-    assert pixel_box == (0, 0, 800, 600)
+    """1000-based normalizzata su immagine 1024x1024 -> pixel senza padding."""
+    # L'immagine è 600x800.
+    # Viene scalata a 768x1024 (scale=1.28).
+    # Viene aggiunto padding X di (1024-768)/2 = 128
+    # bbox su immagine intera: (125, 0, 875, 1000) in scala [0, 1000]
+    bbox = BBox(125, 0, 875, 1000)
+    pixel_box = denormalize_bbox(bbox, (600, 800))
+    # Il clipping difensivo arrotonda in (0, 0, 600, 800)
+    assert pixel_box == (0, 0, 600, 800)
 
 
 def test_denormalize_bbox_clipped() -> None:
@@ -59,7 +64,7 @@ def test_denormalize_bbox_clipped() -> None:
 
 def test_crop_image_from_bbox_saves_file(sample_image: Path, tmp_path: Path) -> None:
     """Il crop salva un file valido e ritorna il path."""
-    bbox = BBox(0, 0, 1000, 1000)  # tutta l'immagine
+    bbox = BBox(125, 0, 875, 1000)  # tutta l'immagine per 600x800
     out = tmp_path / "crop.png"
     result = crop_image_from_bbox(sample_image, bbox, output_path=out)
     assert result is not None

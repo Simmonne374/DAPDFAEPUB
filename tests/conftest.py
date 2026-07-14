@@ -17,7 +17,7 @@ _SRC = _PROJECT_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import fitz  # noqa: E402
+import pymupdf as fitz  # noqa: E402
 import pytest  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 

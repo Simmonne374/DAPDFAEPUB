@@ -82,16 +82,19 @@ def denormalize_bbox(
     bbox: BBox,
     image_size: tuple[int, int],
     normalize_range: float = DEFAULT_NORMALIZE_RANGE,
+    target_size: int = 1024,
 ) -> tuple[int, int, int, int]:
     """Converte una :class:`BBox` normalizzata in coordinate pixel della pagina originale.
 
-    Le coordinate emesse dal modello Unlimited-OCR sono già relative all'aspect ratio
-    delle dimensioni della pagina originale normalizzate su scala [0, normalize_range].
+    Le coordinate emesse dal modello Unlimited-OCR sono relative alla
+    versione normalizzata e padded a quadrato (target_size) usata per l'inferenza.
+    Bisogna quindi ricalcolare la scala e il padding e invertirli.
 
     Args:
         bbox: BBox in scala ``[0, normalize_range]``.
         image_size: ``(width, height)`` dell'immagine target in pixel.
         normalize_range: Valore massimo della scala normalizzata.
+        target_size: Dimensione del quadrato normalizzato (default 1024).
 
     Returns:
         Tupla ``(left, upper, right, lower)`` valida per
@@ -99,10 +102,24 @@ def denormalize_bbox(
     """
     img_w, img_h = image_size
 
-    x_min_mapped = bbox.x_min * img_w / normalize_range
-    x_max_mapped = bbox.x_max * img_w / normalize_range
-    y_min_mapped = bbox.y_min * img_h / normalize_range
-    y_max_mapped = bbox.y_max * img_h / normalize_range
+    scale = target_size / max(img_w, img_h)
+    new_w = max(1, int(round(img_w * scale)))
+    new_h = max(1, int(round(img_h * scale)))
+
+    paste_x = (target_size - new_w) / 2.0
+    paste_y = (target_size - new_h) / 2.0
+
+    # Da scala [0, normalize_range] a scala pixel nel quadrato target_size
+    x_min_1024 = bbox.x_min * target_size / normalize_range
+    y_min_1024 = bbox.y_min * target_size / normalize_range
+    x_max_1024 = bbox.x_max * target_size / normalize_range
+    y_max_1024 = bbox.y_max * target_size / normalize_range
+
+    # Rimuovi padding e riscala alle coordinate originali
+    x_min_mapped = (x_min_1024 - paste_x) / scale
+    y_min_mapped = (y_min_1024 - paste_y) / scale
+    x_max_mapped = (x_max_1024 - paste_x) / scale
+    y_max_mapped = (y_max_1024 - paste_y) / scale
 
     left = int(round(x_min_mapped))
     upper = int(round(y_min_mapped))
@@ -125,6 +142,7 @@ def crop_image_from_bbox(
     *,
     normalize_range: float = DEFAULT_NORMALIZE_RANGE,
     min_size: int = 32,
+    target_size: int = 1024,
 ) -> Path | None:
     """Ritaglia un'immagine usando una BBox normalizzata.
 
@@ -146,7 +164,7 @@ def crop_image_from_bbox(
 
     with Image.open(image_path) as img:
         w, h = img.size
-        pixel_box = denormalize_bbox(bbox, (w, h), normalize_range=normalize_range)
+        pixel_box = denormalize_bbox(bbox, (w, h), normalize_range=normalize_range, target_size=target_size)
         width_px = pixel_box[2] - pixel_box[0]
         height_px = pixel_box[3] - pixel_box[1]
 
@@ -209,6 +227,7 @@ def crop_batch_from_pages(
     page_image_paths: Sequence[str | Path],
     bboxes_per_page: Sequence[Iterable[BBox]],
     output_dir: str | Path,
+    target_size: int = 1024,
 ) -> list[Path]:
     """Utility: data N pagine con le rispettive BBox, salva tutti i crop.
 
@@ -228,7 +247,7 @@ def crop_batch_from_pages(
         for i, bbox in enumerate(page_bboxes):
             label = bbox.label or f"asset{i:02d}"
             output_path = out / f"{page_path.stem}_{label}.png"
-            result = crop_image_from_bbox(page_path, bbox, output_path=output_path)
+            result = crop_image_from_bbox(page_path, bbox, output_path=output_path, target_size=target_size)
             if result is not None:
                 saved.append(result)
     return saved

@@ -21,18 +21,16 @@ import time
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from relictoepub.compile.build_epub import BookMetadata, build_epub
-from relictoepub.ingest import IngestResult, render_pdf
+from relictoepub.ingest import render_pdf
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
 from relictoepub.postprocess.bbox_crop import (
     BBox,
     crop_image_from_bbox,
-    extract_bbox_tokens,
 )
 from relictoepub.postprocess.text_clean import clean_text
 from relictoepub.postprocess.webp_optim import optimize_batch
@@ -315,7 +313,7 @@ class Pipeline:
                         out_path = crops_dir / f"page{page.page_num:04d}_{img_label}.png"
                         
                         result_path = crop_image_from_bbox(
-                            page.original_path, bbox, output_path=out_path
+                            page.original_path, bbox, output_path=out_path, target_size=self.target_size
                         )
                         if result_path and result_path.exists():
                             saved_crops.append(result_path)
