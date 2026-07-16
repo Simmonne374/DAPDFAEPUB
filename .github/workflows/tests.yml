@@ -1,0 +1,85 @@
+name: Tests
+
+# ---------------------------------------------------------------------------
+# Fast test + lint pipeline for RelicToEpub.
+#
+# Trigger: every push and PR (master + feature branches).
+#
+# What it does:
+#   1. Install dev dependencies (CPU torch so the job is self-contained;
+#      GPU/mark=slow tests are skipped).
+#   2. Run `ruff check` against `src/` and `tests/`.
+#   3. Run `pytest -q` (existing tests use a FakeOCRRunner so no model
+#      download is required and the job finishes in under 2 minutes).
+#
+# The Windows installer workflow (build-windows.yml) handles packaging on
+# push to master and is independent of this one.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: lint + pytest (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dev dependencies (CPU torch)
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          # Use the "cpu" extra so we don't pull a 1.5 GB CUDA wheel on CI.
+          # The "pkg" extra is for the Windows installer workflow only.
+          python -m pip install -e ".[dev,cpu]"
+
+      - name: Verify pandoc is available
+        shell: pwsh
+        run: |
+          $pandoc = (Get-Command pandoc -ErrorAction SilentlyContinue)
+          if (-not $pandoc) {
+            Write-Host "::warning::pandoc not installed; tests that need it will be skipped"
+          } else {
+            Write-Host "pandoc: $($pandoc.Path)"
+          }
+
+      - name: Ruff lint
+        shell: pwsh
+        run: |
+          ruff check src tests
+
+      - name: Pytest
+        shell: pwsh
+        run: |
+          # -q for compact output; existing tests are model-free thanks to
+          # the FakeOCRRunner monkeypatch in tests/test_pipeline.py.
+          pytest -q

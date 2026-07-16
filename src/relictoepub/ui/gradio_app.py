@@ -13,16 +13,12 @@ i parametri e fa streaming degli eventi nel log e nella progress bar.
 from __future__ import annotations
 
 import logging
-import os
-import time
 import traceback
 from collections.abc import Iterator
 from pathlib import Path
 
 import gradio as gr
 
-import sys
-import subprocess
 
 from relictoepub.compile.build_epub import BookMetadata
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
@@ -41,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 
 def _format_event(event: ProgressEvent) -> str:
-    elapsed_str = "" if not event.extra else ""
     bar = ""
     if event.total:
         filled = int(round(event.percent / 5))
@@ -189,7 +184,6 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
         yield log_text, "🔴 **Dipendenza mancante**", gr.Button(interactive=True), gr.update(label="Errore")
         return
 
-    progress = gr.Progress(track_tqdm=True)
     try:
         path = snapshot_download(
             repo_id="baidu/Unlimited-OCR",

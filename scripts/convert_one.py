@@ -55,9 +55,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Codice lingua ISO 639-1 (default: it)")
     parser.add_argument("--no-eink-optim", action="store_true",
                         help="Disabilita l'ottimizzazione WebP/E-ink")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Log dettagliato (DEBUG)")
-    return parser.parse_args(argv)
+        parser.add_argument("--chapter-pages", type=int, default=None,
+                            help="Se il libro non ha struttura a heading (H1/H2), "
+                                 "raggruppa le pagine in capitoli di N pagine.")
+        parser.add_argument("--verbose", "-v", action="store_true",
+                            help="Log dettagliato (DEBUG)")
+        return parser.parse_args(argv)
 
 
 def _event_printer() -> callable:
@@ -119,7 +122,8 @@ def main(argv: list[str] | None = None) -> int:
         max_pages_per_batch=args.pages_per_batch,
         eink_optimize=not args.no_eink_optim,
         metadata=metadata,
-    )
+            chapter_pages=args.chapter_pages,
+        )
     try:
         result = pipeline.run(args.input, output_epub, progress_callback=_event_printer())
     except KeyboardInterrupt:
