@@ -116,10 +116,14 @@ def advanced_options() -> dict[str, gr.components.Component]:
             info="PNG → WebP, scala di grigi, boost contrasto",
         ),
         "title": gr.Textbox(
-            label="Titolo del libro", placeholder="Titolo del libro",
+            label="Titolo del libro",
+            placeholder="Titolo del libro",
+            info="Se lasciato vuoto, verrà usato il nome del file PDF.",
         ),
         "author": gr.Textbox(
-            label="Autore", placeholder="Autore (opzionale)",
+            label="Autore",
+            placeholder="Autore (opzionale)",
+            info="Se lasciato vuoto, verrà impostato come 'Unknown'.",
         ),
     }
 

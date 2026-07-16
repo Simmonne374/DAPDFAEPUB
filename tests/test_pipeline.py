@@ -10,7 +10,6 @@ from __future__ import annotations
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Iterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,17 +32,32 @@ class FakeOCRRunner:
     def __init__(self, config: InferenceConfig) -> None:
         self.config = config
 
+    def run_batch_iter(self, image_paths):
+        """Replica la firma del runner reale: yield di (testo, status)."""
+        markdown = (
+            "# Capitolo Fake\n\n"
+            "Testo OCR simulato per la pagina corrente.\n\n"
+            "<|det|>figure[100, 100, 500, 500]<|/det|>\n"
+        )
+        yield markdown, "running"
+        yield markdown, "done"
+
     def run_batch(self, image_paths: list[Path]) -> MagicMock:
         result = MagicMock()
-        # Markdown con un'immagine fittizia via tag bbox
+        # Markdown con un'immagine fittizia via tag det (formato consumato da pipeline.py)
         result.markdown = (
             "# Capitolo Fake\n\n"
             "Testo OCR simulato per la pagina corrente.\n\n"
-            "<|bbox|100|100|500|500|figure|>\n"
+            "<|det|>figure[100, 100, 500, 500]<|/det|>\n"
         )
         result.raw_text = result.markdown
         result.page_separators = len(image_paths)
         return result
+
+    @staticmethod
+    def _strip_image_tokens(text: str) -> str:
+        """Stub del private method chiamato da ``pipeline.py``."""
+        return text
 
 
 def _patch_runner(monkeypatch: pytest.MonkeyPatch) -> None:
