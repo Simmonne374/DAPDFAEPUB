@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import patch
 from relictoepub.ui.components import check_model_status
 
@@ -38,99 +37,91 @@ def test_check_model_status_returns_none():
 
 
 def test_download_model_ui_success():
-    from unittest.mock import MagicMock
+    """Verifica il flusso di successo di ``_download_model_ui`` (snapshot_download)."""
     from relictoepub.ui.gradio_app import _download_model_ui
-    
-    mock_process = MagicMock()
-    mock_process.stdout.readline.side_effect = ["Downloading safetensors...\n", "Done!\n", ""]
-    mock_process.returncode = 0
-    
-    with patch("subprocess.Popen", return_value=mock_process) as mock_popen, \
+
+    with patch("huggingface_hub.snapshot_download") as mock_snap, \
          patch("relictoepub.ui.gradio_app.check_model_status") as mock_status:
-        
+        mock_snap.return_value = "/cache/baidu/Unlimited-OCR"
         mock_status.return_value = (True, "🟢 **Modello rilevato localmente**")
-        
+
         generator = _download_model_ui()
         results = list(generator)
-        
-        assert len(results) >= 4
-        
-        # Verify first yield
-        log1, status1, btn1 = results[0]
+
+        # La funzione deve emettere almeno 2 yield: inizio + fine.
+        assert len(results) >= 2
+        # Ciascun yield è una 4-tupla (log, status, button, progress_update).
+        for r in results:
+            assert len(r) == 4
+
+        # Verifica il primo yield (annuncio).
+        log1, status1, btn1, _ = results[0]
         assert "Inizio download" in log1
-        assert "⏳ **Download in corso...**" == status1
+        assert status1 == "⏳ **Download in corso...**"
         assert btn1.interactive is False
-        
-        # Verify last yield
-        log_last, status_last, btn_last = results[-1]
-        assert "Modello scaricato e verificato con successo!" in log_last
-        assert "🟢 **Modello rilevato localmente**" == status_last
+
+        # Verifica l'ultimo yield (successo).
+        log_last, status_last, btn_last, _ = results[-1]
+        assert "Modello scaricato in cache HuggingFace" in log_last
+        assert status_last == "🟢 **Modello rilevato localmente**"
         assert btn_last.interactive is True
 
-        # Assert cmd has --quiet
-        mock_popen.assert_called_once()
-        cmd = mock_popen.call_args[0][0]
-        assert "--quiet" in cmd
+        # Verifica che il repo scaricato sia quello giusto.
+        mock_snap.assert_called_once()
+        kwargs = mock_snap.call_args.kwargs
+        assert kwargs["repo_id"] == "baidu/Unlimited-OCR"
 
 
 def test_download_model_ui_failure():
-    from unittest.mock import MagicMock
+    """Verifica il flusso di fallimento (eccezione di snapshot_download)."""
     from relictoepub.ui.gradio_app import _download_model_ui
-    
-    mock_process = MagicMock()
-    mock_process.stdout.readline.side_effect = ["Error: network timeout\n", ""]
-    mock_process.returncode = 1
-    
-    with patch("subprocess.Popen", return_value=mock_process) as mock_popen:
+
+    with patch(
+        "huggingface_hub.snapshot_download",
+        side_effect=RuntimeError("network timeout"),
+    ):
         generator = _download_model_ui()
         results = list(generator)
-        
-        assert len(results) >= 3
-        
-        # Verify last yield
-        log_last, status_last, btn_last = results[-1]
-        assert "Errore durante il download" in log_last
-        assert "🔴 **Errore nel download del modello**" == status_last
-        assert btn_last.interactive is True
 
-
-def test_download_model_ui_exception():
-    from relictoepub.ui.gradio_app import _download_model_ui
-    
-    with patch("subprocess.Popen", side_effect=FileNotFoundError("huggingface-cli not found")):
-        generator = _download_model_ui()
-        results = list(generator)
-        
+        # Deve esserci almeno il yield iniziale e quello d'errore.
         assert len(results) >= 2
-        
-        # Verify last yield
-        log_last, status_last, btn_last = results[-1]
-        assert "Errore imprevisto" in log_last
-        assert "huggingface-cli not found" in log_last
-        assert "🔴 **Errore nel download del modello**" == status_last
+
+        log_last, status_last, btn_last, _ = results[-1]
+        assert "Download fallito" in log_last
+        assert "network timeout" in log_last
+        assert status_last == "🔴 **Errore nel download del modello**"
         assert btn_last.interactive is True
 
 
-def test_download_model_ui_generator_closed():
-    from unittest.mock import MagicMock
+def test_download_model_ui_no_hub_dependency():
+    """Verifica il ramo di errore se huggingface_hub non è importabile."""
+    import builtins
     from relictoepub.ui.gradio_app import _download_model_ui
-    
-    mock_process = MagicMock()
-    mock_process.poll.return_value = None
-    mock_process.stdout.readline.side_effect = ["Downloading safetensors...\n", ""]
-    
-    with patch("subprocess.Popen", return_value=mock_process):
+
+    # Rimuoviamo temporaneamente huggingface_hub dal sys.modules.
+    import sys
+    saved = sys.modules.pop("huggingface_hub", None)
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "huggingface_hub":
+            raise ImportError("huggingface_hub not installed")
+        return real_import(name, *args, **kwargs)
+
+    builtins.__import__ = fake_import
+    try:
         generator = _download_model_ui()
-        # Advance generator to spawn the process
-        next(generator)  # First yield: "🔄 Inizio download..."
-        next(generator)  # Second yield: inside process loop
-        
-        # Close the generator prematurely (this raises GeneratorExit)
-        generator.close()
-        
-        # Verify process.terminate was called
-        mock_process.terminate.assert_called_once()
-        mock_process.wait.assert_called_once_with(timeout=5)
+        results = list(generator)
+        # 1 yield iniziale + 1 yield d'errore.
+        assert len(results) == 2
+        log_last, status_last, btn_last, _ = results[-1]
+        assert "non installato" in log_last
+        assert status_last == "🔴 **Dipendenza mancante**"
+        assert btn_last.interactive is True
+    finally:
+        builtins.__import__ = real_import
+        if saved is not None:
+            sys.modules["huggingface_hub"] = saved
 
 
 def test_run_pipeline_yields_four_values():

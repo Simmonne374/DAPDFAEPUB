@@ -20,7 +20,7 @@ import logging
 import time
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -148,8 +148,9 @@ class Pipeline:
         max_pages_per_batch: int = 20,
         eink_optimize: bool = True,
         metadata: BookMetadata | None = None,
-        work_dir: Path | None = None,
-    ) -> None:
+            chapter_pages: int | None = None,
+            work_dir: Path | None = None,
+        ) -> None:
         self.inference_config = inference_config or InferenceConfig(
             quantization=QuantizationMode.INT4
         )
@@ -162,6 +163,7 @@ class Pipeline:
         self.inference_config.pages_per_batch = self.max_pages_per_batch
         self.eink_optimize = eink_optimize
         self.metadata = metadata
+        self.chapter_pages = chapter_pages
         self.work_dir = work_dir
         self._runner: UnlimitedOCRRunner | None = None
 
@@ -209,6 +211,13 @@ class Pipeline:
         output_epub = Path(output_epub)
         if self.metadata is None:
             self.metadata = BookMetadata(title=input_pdf.stem)
+        # Se l'utente ha passato ``chapter_pages`` a ``Pipeline.__init__``
+        # ma non ha fornito un ``BookMetadata`` proprio, applichiamo il
+        # valore al metadata di default così l'EPUB finale lo rispetta.
+        if self.chapter_pages is not None:
+            self.metadata = replace(
+            self.metadata, chapter_pages=self.chapter_pages
+            )
         start = time.perf_counter()
 
         # 1) Ingest

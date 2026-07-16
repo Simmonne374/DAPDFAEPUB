@@ -19,13 +19,12 @@ from __future__ import annotations
 import logging
 import re
 import shutil
-import subprocess
 import tempfile
 import uuid
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 from relictoepub.compile.eink_css import EINK_CSS
 
@@ -59,6 +58,10 @@ class BookMetadata:
         language: Codice lingua ISO 639-1 (``"it"``, ``"en"``, …).
         identifier: UUID o ISBN. Default: UUID generato automaticamente.
         cover_image: Path opzionale a un'immagine di copertina.
+        chapter_pages: Se impostato e il libro non ha struttura a
+            heading (H1/H2), raggruppa le pagine in capitoli di N
+            pagine ciascuno. ``None`` disabilita il raggruppamento
+            (default: comportamento adattivo puro).
     """
 
     title: str
@@ -66,11 +69,132 @@ class BookMetadata:
     language: str = "it"
     identifier: str = field(default_factory=lambda: f"urn:uuid:{uuid.uuid4()}")
     cover_image: Path | None = None
+    chapter_pages: int | None = None
 
 
 _HEADING_PATTERN = re.compile(
     r"^<!-- pagebreak -->$", re.MULTILINE
 )
+_H1_PATTERN = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+_H2_PATTERN = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
+
+
+def _split_on_pattern(
+    markdown: str, pattern: re.Pattern[str]
+) -> list[dict] | None:
+    """Split Markdown su un regex di heading; ritorna ``None`` se <3 match."""
+    matches = list(pattern.finditer(markdown))
+    if len(matches) < 3:
+        return None
+
+    chapters: list[dict] = []
+    if matches[0].start() > 0:
+        chapters.append(
+            {
+                "level": 1,
+                "title": "",
+                "body": markdown[: matches[0].start()].rstrip(),
+            }
+        )
+    for i, match in enumerate(matches):
+        next_start = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
+        body = markdown[match.end() : next_start].rstrip()
+        chapters.append(
+            {
+                "level": 1,
+                "title": match.group(1).strip(),
+                "body": body,
+            }
+        )
+    return chapters
+
+
+def _split_page_grouping(
+    markdown: str, group_size: int
+) -> list[dict]:
+    """Raggruppa le pagine in capitoli di N pagine ciascuno.
+
+    Usa i marker ``<!-- pagebreak -->`` come separatore di pagina.
+    """
+    pages = [p.strip() for p in _HEADING_PATTERN.split(markdown) if p.strip()]
+    if not pages:
+        return [{"level": 1, "title": "", "body": markdown.strip()}]
+    chapters: list[dict] = []
+    for start in range(0, len(pages), group_size):
+        chunk = pages[start : start + group_size]
+        chapters.append(
+            {
+                "level": 1,
+                "title": f"Pagine {start + 1}-{start + len(chunk)}",
+                "body": "\n\n".join(chunk),
+            }
+        )
+    return chapters
+
+
+def _split_legacy_pagebreaks(markdown: str) -> list[dict]:
+    """Fallback legacy: una pagina = un capitolo (basato sui pagebreak).
+
+    Le pagine con body vuoto (es. pagebreak finale senza contenuto che
+    segue) vengono scartate.
+    """
+    matches = list(_HEADING_PATTERN.finditer(markdown))
+    if not matches:
+        return [{"level": 1, "title": "", "body": markdown.strip()}]
+
+    chapters: list[dict] = []
+    if matches[0].start() > 0:
+        chapters.append(
+            {"level": 1, "title": "", "body": markdown[: matches[0].start()].strip()}
+        )
+    for i, match in enumerate(matches):
+        next_start = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
+        body = markdown[match.end() : next_start].strip()
+        if body:
+            chapters.append({"level": 1, "title": "", "body": body})
+    return chapters
+
+
+def _split_into_chapters(
+    markdown: str,
+    *,
+    chapter_pages: int | None = None,
+) -> list[dict]:
+    """Divide il Markdown in capitoli logici con strategia adattiva.
+
+    Strategia in ordine di priorità:
+    1. **Heading H1** (``^# …``): se ci sono ≥ 3 match, ogni H1 diventa
+       un capitolo. È la struttura più pulita per un libro con indice.
+    2. **Heading H2** (``^## …``): fallback per libri piatti senza H1
+       ma con sotto-sezioni semantiche (≥ 3 match).
+    3. **Page grouping**: se ``chapter_pages`` è un intero positivo,
+       raggruppa le pagine in chunk da N (usando i marker
+       ``<!-- pagebreak -->`` come separatore).
+    4. **Page-per-chapter**: nessuna struttura individuabile, ogni
+       ``<!-- pagebreak -->`` diventa un capitolo (comportamento
+       legacy).
+
+    Restituisce una lista di dict ``{"level", "title", "body"}``.
+    """
+    if not markdown.strip():
+        return []
+
+    # 1) H1
+    h1_chapters = _split_on_pattern(markdown, _H1_PATTERN)
+    if h1_chapters:
+        return h1_chapters
+
+    # 2) H2
+    h2_chapters = _split_on_pattern(markdown, _H2_PATTERN)
+    if h2_chapters:
+        return h2_chapters
+
+    # 3) Page grouping
+    if chapter_pages and chapter_pages > 0:
+        return _split_page_grouping(markdown, chapter_pages)
+
+    # 4) Legacy: una pagina = un capitolo
+    return _split_legacy_pagebreaks(markdown)
 
 
 def _check_pandoc() -> str:
@@ -103,36 +227,6 @@ def _convert_markdown_to_xhtml(markdown: str) -> str:
         markdown, to="html5", format="markdown+smart",
         extra_args=["--standalone", "--no-highlight", "--wrap=none"],
     )
-
-
-def _split_into_chapters(markdown: str) -> list[dict]:
-    """Divide il Markdown in capitoli logici solo sui tag pagebreak.
-
-    Restituisce una lista di dict ``{"level", "title", "body"}``.
-    """
-    matches = list(_HEADING_PATTERN.finditer(markdown))
-    if not matches:
-        return [{"level": 1, "title": "", "body": markdown.strip()}]
-
-    chapters: list[dict] = []
-    # Tutto ciò che precede il primo match → frontmatter
-    if matches[0].start() > 0:
-        chapters.append(
-            {"level": 1, "title": "", "body": markdown[: matches[0].start()].strip()}
-        )
-
-    for i, match in enumerate(matches):
-        next_start = matches[i + 1].start() if i + 1 < len(matches) else len(markdown)
-        body = markdown[match.end() : next_start].strip()
-        
-        chapters.append(
-            {
-                "level": 1,
-                "title": "",
-                "body": body,
-            }
-        )
-    return chapters
 
 
 def _chapter_xhtml(title: str, body_markdown: str, level: int) -> str:
@@ -187,14 +281,14 @@ def _add_cover_page(chapters: list[ChapterInfo], cover_image: Path | None) -> li
     if cover_image is None or not cover_image.exists():
         return chapters
     cover_html = (
-        f'<?xml version="1.0" encoding="utf-8"?>\n'
-        f'<!DOCTYPE html>\n'
-        f'<html xmlns="http://www.w3.org/1999/xhtml">\n'
-        f'<head><title>Cover</title>'
-        f'<link rel="stylesheet" href="style.css"/></head>\n'
-        f'<body><div style="text-align:center; margin:0; padding:0;">'
-        f'<img src="images/cover.webp" alt="Cover" '
-        f'style="max-width:100%; height:auto;"/></div></body></html>'
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml">\n'
+        '<head><title>Cover</title>'
+        '<link rel="stylesheet" href="style.css"/></head>\n'
+        '<body><div style="text-align:center; margin:0; padding:0;">'
+        '<img src="images/cover.webp" alt="Cover" '
+        'style="max-width:100%; height:auto;"/></div></body></html>'
     )
     cover_chapter = ChapterInfo(
         title="Cover", level=1, filename="cover.xhtml", xhtml=cover_html,
@@ -256,17 +350,17 @@ def build_epub(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 1) Split in capitoli
-    chapters_raw = _split_into_chapters(markdown)
+    # 1) Split in capitoli (strategia adattiva, vedi _split_into_chapters)
+    chapters_raw = _split_into_chapters(
+        markdown, chapter_pages=metadata.chapter_pages
+    )
     chapters: list[ChapterInfo] = []
     for i, raw in enumerate(chapters_raw):
         body = raw.get("body", "")
-        # Cerca un titolo H1/H2/H3 nel body della pagina per la TOC
-        title = ""
-        h_match = re.search(r"^(#{1,3})\s+(.+?)\s*$", body, re.MULTILINE)
-        if h_match:
-            title = h_match.group(2).strip()
-            
+        # Il titolo è già stato deciso dallo splitter adattivo (H1, H2,
+        # page-grouping, o fallback "Pagina N"). Lo accettiamo così com'è.
+        title = raw.get("title", "") or ""
+
         xhtml = _chapter_xhtml(
             title="",  # non generiamo un titolo H1 duplicato in testa al file
             body_markdown=body,

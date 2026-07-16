@@ -16,12 +16,15 @@ istanziarsi senza saturare la VRAM al boot.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
+import queue
+import threading
 import time
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
-from PIL import Image
 
 from relictoepub.inference.config import (
     InferenceConfig,
@@ -30,6 +33,26 @@ from relictoepub.inference.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _QueueWriter(io.TextIOBase):
+    """``io.TextIOBase`` minimale che scarica ogni ``write()`` in una ``queue.Queue``.
+
+    Usato insieme a :func:`contextlib.redirect_stdout` per catturare
+    l'output del modello (che emette i token via ``print``) senza
+    manipolare lo ``sys.stdout`` globale — più thread-safe e robusto.
+    """
+
+    def __init__(self, q: queue.Queue) -> None:
+        self._q = q
+
+    def write(self, s: str) -> int:  # type: ignore[override]
+        if s:
+            self._q.put(s)
+        return len(s)
+
+    def flush(self) -> None:  # type: ignore[override]
+        return None
 
 
 class UnlimitedOCRRunner:
@@ -64,7 +87,7 @@ class UnlimitedOCRRunner:
 
         try:
             import torch
-            from transformers import AutoModel, AutoProcessor, AutoTokenizer
+            from transformers import AutoModel, AutoTokenizer
         except ImportError as exc:  # pragma: no cover - dipendenze obbligatorie
             raise RuntimeError(
                 "Per usare UnlimitedOCRRunner servono: torch, transformers "
@@ -153,69 +176,61 @@ class UnlimitedOCRRunner:
         return self.run_batch([Path(image_path)])
 
     def run_batch_iter(self, image_paths: Sequence[str | Path]) -> Iterator[tuple[str, str]]:
-        """Esegue l'OCR yielding del testo parziale in tempo reale (stream dei token)."""
+        """Esegue l'OCR yielding del testo parziale in tempo reale (stream dei token).
+
+        Il modello Unlimited-OCR scrive i suoi token grezzi su stdout;
+        qui li catturiamo tramite ``contextlib.redirect_stdout``
+        (thread-safe, non globale) instradandoli in una ``queue.Queue``,
+        senza più manipolare ``sys.stdout`` manualmente.
+        """
         if not image_paths:
             yield "", "done"
             return
         self.load_model()
 
         import tempfile
-        import threading
-        import queue
-        import sys
-        import io
-
-        class StreamRedirector(io.TextIOBase):
-            def __init__(self, q):
-                self.q = q
-            def write(self, s):
-                if s:
-                    self.q.put(s)
-                return len(s)
-            def flush(self):
-                pass
 
         prompt = self.config.prompt_template
         ngram_window = self.config.ngram_window_multi if len(image_paths) > 1 else 128
         temp_dir = tempfile.gettempdir()
 
-        q = queue.Queue()
-        redirector = StreamRedirector(q)
-        result_container = {}
+        q: queue.Queue[str] = queue.Queue()
+        writer = _QueueWriter(q)
+        result_container: dict[str, object] = {}
+        infer_exception: dict[str, BaseException] = {}
 
-        def worker():
-            try:
-                # Utilizza i metodi ufficiali del modello Unlimited-OCR
-                if len(image_paths) == 1:
-                    decoded = self._model.infer(
-                        self._tokenizer,
-                        prompt=prompt,
-                        image_file=str(image_paths[0]),
-                        eval_mode=True,
-                        max_length=self.config.max_new_tokens,
-                        no_repeat_ngram_size=self.config.ngram_no_repeat_size,
-                        ngram_window=ngram_window,
-                        output_path=temp_dir
-                    )
-                else:
-                    decoded, _ = self._model.infer_multi(
-                        self._tokenizer,
-                        prompt=prompt,
-                        image_files=[str(p) for p in image_paths],
-                        image_size=1024,
-                        max_length=self.config.max_new_tokens,
-                        no_repeat_ngram_size=self.config.ngram_no_repeat_size,
-                        ngram_window=ngram_window,
-                        output_path=temp_dir
-                    )
-                result_container["decoded"] = decoded
-            except Exception as e:
-                result_container["exception"] = e
+        def worker() -> None:
+            # redirect_stdout è thread-safe: push del writer e pop
+            # automatico, anche se il thread termina per eccezione.
+            with contextlib.redirect_stdout(writer):
+                try:
+                    if len(image_paths) == 1:
+                        decoded = self._model.infer(  # type: ignore[union-attr]
+                            self._tokenizer,
+                            prompt=prompt,
+                            image_file=str(image_paths[0]),
+                            eval_mode=True,
+                            max_length=self.config.max_new_tokens,
+                            no_repeat_ngram_size=self.config.ngram_no_repeat_size,
+                            ngram_window=ngram_window,
+                            output_path=temp_dir,
+                        )
+                    else:
+                        decoded, _ = self._model.infer_multi(  # type: ignore[union-attr]
+                            self._tokenizer,
+                            prompt=prompt,
+                            image_files=[str(p) for p in image_paths],
+                            image_size=1024,
+                            max_length=self.config.max_new_tokens,
+                            no_repeat_ngram_size=self.config.ngram_no_repeat_size,
+                            ngram_window=ngram_window,
+                            output_path=temp_dir,
+                        )
+                    result_container["decoded"] = decoded
+                except Exception as exc:  # noqa: BLE001
+                    infer_exception["error"] = exc
 
-        old_stdout = sys.stdout
-        sys.stdout = redirector
-
-        thread = threading.Thread(target=worker)
+        thread = threading.Thread(target=worker, daemon=True)
         thread.start()
 
         accumulated_text = ""
@@ -223,16 +238,15 @@ class UnlimitedOCRRunner:
             while thread.is_alive() or not q.empty():
                 try:
                     token = q.get(timeout=0.1)
-                    accumulated_text += token
-                    yield accumulated_text, "running"
                 except queue.Empty:
                     continue
+                accumulated_text += token
+                yield accumulated_text, "running"
         finally:
-            sys.stdout = old_stdout
-            thread.join()
+            thread.join(timeout=1.0)
 
-        if "exception" in result_container:
-            raise result_container["exception"]
+        if "error" in infer_exception:
+            raise infer_exception["error"]
 
         decoded = result_container.get("decoded", accumulated_text)
         yield decoded, "done"
