@@ -1,4 +1,4 @@
-"""Wrapper UI per l'exeguibile RelicToEpubUI.
+"""Wrapper UI per l'eseguibile RelicToEpubUI.
 
 Responsabilità:
 1. Reindirizza stdout/stderr su un file log in ``AppData\\Local\\RelicToEpub\\logs``
@@ -15,6 +15,7 @@ PyTorch corretto prima di invocare questo launcher.
 from __future__ import annotations
 
 import os
+import socket
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -48,72 +49,74 @@ def _setup_logging() -> Path:
     # Apre i file in append; se fallisce, fallback a None (output a console)
     try:
         log_fp = log_path.open("a", encoding="utf-8")
-
-        # Sostituisce stdout/stderr con una classe custom che logga + propaga.
-        # Importante: ``isatty()`` deve restituire False perché stiamo scrivendo
-        # su file. Uvicorn/Gradio chiamano ``isatty()`` per configurare il
-        # formatter del log; se ritorniamo True (ereditato dal real stdout che
-        # in subsystem "windows" potrebbe mentire) otteniamo crash con
-        # ``ValueError: Unable to configure formatter 'default'``.
-        class _StreamLogger:
-            def __init__(self, real, log_f):
-                self.real = real
-                self.log_f = log_f
-
-            def write(self, msg):
-                try:
-                    self.log_f.write(msg)
-                    self.log_f.flush()
-                except Exception:
-                    pass
-                try:
-                    return self.real.write(msg)
-                except Exception:
-                    return 0
-
-            def flush(self):
-                try:
-                    self.log_f.flush()
-                except Exception:
-                    pass
-                try:
-                    return self.real.flush()
-                except Exception:
-                    return 0
-
-            def isatty(self):
-                # Siamo su file: mai una TTY. Questo evita che uvicorn cerchi
-                # di usare formattatori ANSI/Terminal.
-                return False
-
-            def fileno(self):
-                # Alcune librerie (logging, ipython) chiamano fileno() per
-                # identificare lo stream. Rimandiamo al real stdout se possibile.
-                try:
-                    return self.real.fileno()
-                except (AttributeError, OSError, ValueError):
-                    raise OSError("Stream non collegato a un file descriptor")
-
-        sys.stdout = _StreamLogger(sys.__stdout__, log_fp)
-        sys.stderr = _StreamLogger(sys.__stderr__, log_fp)
+        sys.stdout = log_fp  # type: ignore[assignment]
+        sys.stderr = log_fp  # type: ignore[assignment]
         return log_path
     except OSError:
         return Path()
 
 
-def main() -> int:
-    log_path = _setup_logging()
+def _check_boot() -> None:
+    """Verifica che il bootstrap GPU abbia completato l'installazione."""
+    if os.environ.get("RELICTOEPUB_BOOT_OK") == "1":
+        return
+    # In dev mode (venv) il bootstrap non viene eseguito; non blocchiamo
+    # ma emettiamo un avviso.
+    sys.stdout.write(
+        "[launch_ui_launcher] Avvio in modalità dev "
+        "(RELICTOEPUB_BOOT_OK non settato).\n"
+    )
+    sys.stdout.flush()
 
-    if os.environ.get("RELICTOEPUB_BOOT_OK") != "1":
-        sys.stderr.write(
-            "[launch_ui_launcher] ERRORE: l'app deve essere avviata tramite "
-            "RelicToEpubBoot.exe (gpu_bootstrap.py). RELICTOEPUB_BOOT_OK mancante.\n"
-        )
-        # Non blocchiamo — può essere avviato in dev mode con venv
-        print(
-            "[launch_ui_launcher] Avvio in modalità dev (RELICTOEPUB_BOOT_OK non settato).",
-            flush=True,
-        )
+
+def _resolve_demo_port(host: str) -> tuple[int, str]:
+    """Trova una porta libera per Gradio.
+
+    Gradio's ``launch(server_port=...)`` fallisce con ``OSError`` se la porta
+    è occupata, perché di default cerca solo quella. Noi invece vogliamo
+    fallback automatico su una porta vicina.
+
+    Ritorna (port, message) dove ``message`` descrive cosa è successo (utile
+    per il log).
+    """
+    port_str = os.environ.get("RELICTOEPUB_PORT", "7860")
+    try:
+        preferred_port = int(port_str)
+    except ValueError:
+        preferred_port = 7860
+    try:
+        port_scan = int(os.environ.get("RELICTOEPUB_PORT_SCAN", "20"))
+    except ValueError:
+        port_scan = 20
+
+    for offset in range(port_scan):
+        candidate = preferred_port + offset
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((host, candidate))
+            except OSError:
+                continue
+            if offset == 0:
+                return candidate, ""
+            return candidate, (
+                f"Porta {preferred_port} occupata, uso {candidate}."
+            )
+    raise RuntimeError(
+        f"Nessuna porta libera nell'intervallo "
+        f"{preferred_port}-{preferred_port + port_scan - 1} su {host}. "
+        f"Chiudi l'istanza precedente di RelicToEpub o imposta "
+        f"RELICTOEPUB_PORT per usarne un'altra."
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    log_path = _setup_logging()
+    if log_path:
+        sys.stdout.write(f"[launch_ui_launcher] Log: {log_path}\n")
+        sys.stdout.flush()
+
+    _check_boot()
 
     project_root, src_dir = _project_paths()
     if str(src_dir) not in sys.path:
@@ -128,14 +131,15 @@ def main() -> int:
         return 2
 
     host = os.environ.get("RELICTOEPUB_HOST", "127.0.0.1")
-    port_str = os.environ.get("RELICTOEPUB_PORT", "7860")
-    try:
-        port = int(port_str)
-    except ValueError:
-        port = 7860
 
-    if log_path:
-        sys.stdout.write(f"[launch_ui_launcher] Log: {log_path}\n")
+    try:
+        port, port_msg = _resolve_demo_port(host)
+    except RuntimeError as exc:
+        sys.stderr.write(f"[launch_ui_launcher] ERRORE: {exc}\n")
+        return 3
+    if port_msg:
+        sys.stdout.write(f"[launch_ui_launcher] {port_msg}\n")
+        sys.stdout.flush()
 
     demo = build_demo()
     demo.queue()
