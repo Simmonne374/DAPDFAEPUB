@@ -132,7 +132,7 @@ Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{#Setup
     ValueType: string; ValueName: "UninstallString";  ValueData: "{uninstallexe}"; \
     Flags: uninsdeletekey; Check: IsAdminInstall
 Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting('AppId')}_is1"; \
-    ValueType: string; ValueName: "QuietUninstallString"; ValueData: """"{uninstallexe}"" /SILENT"; \
+    ValueType: string; ValueName: "QuietUninstallString"; ValueData: """{uninstallexe}"" /SILENT"; \
     Flags: uninsdeletekey; Check: IsAdminInstall
 Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting('AppId')}_is1"; \
     ValueType: string; ValueName: "DisplayIcon";      ValueData: "{app}\{#MyAppBootName}"; \
@@ -165,7 +165,7 @@ Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{#Setup
     ValueType: string; ValueName: "UninstallString";  ValueData: "{uninstallexe}"; \
     Flags: uninsdeletekey; Check: not IsAdminInstall
 Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting('AppId')}_is1"; \
-    ValueType: string; ValueName: "QuietUninstallString"; ValueData: """"{uninstallexe}"" /SILENT"; \
+    ValueType: string; ValueName: "QuietUninstallString"; ValueData: """{uninstallexe}"" /SILENT"; \
     Flags: uninsdeletekey; Check: not IsAdminInstall
 Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting('AppId')}_is1"; \
     ValueType: string; ValueName: "DisplayIcon";      ValueData: "{app}\{#MyAppBootName}"; \
@@ -251,7 +251,7 @@ begin
     LogPath := ExpandConstant(LOG_DIR_APP) + '\' + UNINSTALL_LOG
   else
     LogPath := ExpandConstant(LOG_DIR_APP) + '\' + SETUP_LOG;
-  Txt := FormatDateTime('yyyy-mm-dd hh:nn:ss', Now) + '  ' + Msg + #13#10;
+  Txt := GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '  ' + Msg + #13#10;
   try
     SaveStringToFile(LogPath, Txt, True);
   except
@@ -285,7 +285,7 @@ end;
 // ----------------------------------------------------------------------
 function IsAdminInstall(): Boolean;
 begin
-  Result := IsAdminLoggedOn;
+  Result := IsAdmin;
 end;
 
 // ----------------------------------------------------------------------
@@ -352,7 +352,7 @@ begin
       ExpandConstant('{app}') + #13#10 + #13#10 +
       'Le unita'' A: e B: sono floppy disk storici e potrebbero non essere scrivibili oggi.' + #13#10 +
       'Consigliamo una cartella su disco fisso. Continuare comunque?',
-      mbWarning, MB_YESNO) = IDNO then
+      mbConfirmation, MB_YESNO) = IDNO then
     begin
       Result := False;
       LogMsg('Setup annullato (path sospetto: floppy disk)');
@@ -434,7 +434,7 @@ begin
       repeat
         if (FindRec.Name = '.') or (FindRec.Name = '..') then Continue;
         Full := RootDir + '\' + FindRec.Name;
-        if (FindRec.Attributes and faDirectory) = faDirectory then
+        if DirExists(Full) then
         begin
           CleanupOrphanShortcuts(Full);
         end
@@ -449,8 +449,7 @@ begin
               try
                 DeleteFile(Full);
               except
-                on E: Exception do
-                  LogMsg('Impossibile cancellare ' + Full + ': ' + E.Message);
+                LogMsg('Impossibile cancellare ' + Full);
               end;
             end;
           end;
@@ -470,8 +469,8 @@ procedure InitializeUninstallProgressForm;
 begin
   LastLogMsg := '';
   LogMsg('=== Avvio disinstallazione RelicToEpub v{#MyAppVersion} ===');
-  if UninstallProgressForm.ProgressLabel <> nil then
-    UninstallProgressForm.ProgressLabel.Caption :=
+  if UninstallProgressForm.StatusLabel <> nil then
+    UninstallProgressForm.StatusLabel.Caption :=
       'Rimozione file applicazione in corso...';
 end;
 
