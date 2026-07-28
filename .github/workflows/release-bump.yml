@@ -1,0 +1,79 @@
+name: Release bump PR
+
+# ---------------------------------------------------------------------------
+# Triggerato in modo asincrono quando una release vX.Y.Z viene pubblicata.
+# Apri una PR "chore(release): bump vX.Y.Z" che aggiorna pyproject.toml
+# in modo che la *prossima* run di build-windows.yml parta dalla nuova
+# versione. Niente loop: la release non viene ricreata.
+# ---------------------------------------------------------------------------
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  open-bump-pr:
+    name: Open bump-version PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+
+      - name: Install runtime helper
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Show current and published versions
+        id: versions
+        shell: pwsh
+        run: |
+          $published = "${{ github.event.release.tag_name }}"
+          if (-not $published -or -not $published.StartsWith("v")) {
+            throw "Unexpected tag_name: '$published' (expected 'vX.Y.Z')"
+          }
+          $newVer = $published.TrimStart("v")
+          echo "Published: $newVer"
+          $current = python build/scripts/get_version.py
+          $current = $current.Trim()
+          echo "Current pyproject.toml: $current"
+          if ($current -eq $newVer) {
+            echo "Already on $newVer - nothing to bump"
+            echo "NEEDS_BUMP=false" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            $cur = [version]$current
+            $new = [version]$newVer
+            $diff = $new.CompareTo($cur)
+            if ($diff -le 0) {
+              throw "Published tag $newVer is not greater than current $current"
+            }
+            echo "Need bump: $current -> $newVer"
+            "NEEDS_BUMP=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+          "NEW_VERSION=$newVer" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Open bump PR
+        if: env.NEEDS_BUMP == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          python build/scripts/open_bump_pr.py --version $env:NEW_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "open_bump_pr.py failed (exit $LASTEXITCODE)" }

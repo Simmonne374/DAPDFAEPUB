@@ -10,9 +10,14 @@
 ;
 
 #define MyAppName "RelicToEpub"
-#define MyAppVersion "0.1.0"
+; MyAppVersion viene passata dal workflow CI tramite la CLI di ISCC:
+;   ISCC.exe /DMyAppVersion=X.Y.Z build/installer.iss
+; Il default "0.1.0" serve solo per build locali fuori dalla pipeline.
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.0"
+#endif
 #define MyAppPublisher "RelicToEpub contributors"
-#define MyAppURL "https://github.com/example/relictoepub"
+#define MyAppURL "https://github.com/Simmonne374/DAPDFAEPUB"
 #define MyAppExeName "RelicToEpubUI.exe"
 #define MyAppCliName "RelicToEpubCLI.exe"
 #define MyAppBootName "RelicToEpubBoot.exe"

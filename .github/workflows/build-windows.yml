@@ -8,10 +8,12 @@ name: Build Windows installer
 #
 # Risultato:
 #   1) workflow artifact: installer .exe scaricabile dalla run page
-#   2) draft release: tag build-<short-sha> con installer allegato
-#   3) release rolling latest: installer aggiornato ad ogni merge
+#   2) GitHub Release: tag vX.Y.Z (semver) con installer allegato
+#      e changelog Markdown generato da build/scripts/render_changelog.py
+#
+# Il bump di versione (pyproject.toml) NON avviene qui: viene gestito
+# dal workflow separato release-bump.yml su release: published.
 # ---------------------------------------------------------------------------
-
 
 on:
   push:
@@ -103,6 +105,24 @@ jobs:
           Write-Host "ISCC ready at $dest\ISCC.exe"
           "ISCC=$dest\ISCC.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      # --------------------------------------------------------------
+      # Calcola la prossima versione semver in base ai commit dal
+      # tag semver precedente (se esiste). bump_version.py produce
+      # patch/minor/major secondo i Conventional Commits.
+      # --------------------------------------------------------------
+      - name: Compute next version
+        id: next-version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $v = python build/scripts/bump_version.py
+          if ($LASTEXITCODE -ne 0) { throw "bump_version.py failed (exit $LASTEXITCODE)" }
+          $v = $v.Trim()
+          Write-Host "Next version: $v"
+          "MYAPP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "MYAPP_VERSION=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Build installer (PyInstaller + Inno Setup)
         id: build
         shell: pwsh
@@ -143,85 +163,87 @@ jobs:
           retention-days: 7
 
       # --------------------------------------------------------------
-      # Crea (o aggiorna) una draft release con tag build-<short_sha>.
-      # In questo modo ogni merge in master produce un link permanente
-      # da cui scaricare l installer di quella specifica build.
+      # Genera il changelog Markdown dal tag semver precedente (se
+      # esiste) al commit corrente. Viene usato come body della
+      # GitHub Release vX.Y.Z.
       # --------------------------------------------------------------
-      - name: Create or update draft release for this commit
+      - name: Generate changelog Markdown
+        id: changelog
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $prevTag = (git tag --list "v*" | Sort-Object -Descending | Select-Object -First 1)
+          $ref = "${{ github.sha }}"
+          if (-not $prevTag) {
+            Write-Host "No previous semver tag - generating changelog from initial commit"
+            $prevRef = (git rev-list --max-parents=0 HEAD).Trim()
+          } else {
+            Write-Host "Previous semver tag: $prevTag"
+            $prevRef = $prevTag
+          }
+          $md = python build/scripts/render_changelog.py $prevRef $ref
+          if ($LASTEXITCODE -ne 0) { throw "render_changelog.py failed (exit $LASTEXITCODE)" }
+          [System.IO.File]::WriteAllText("changelog.md", $md, [System.Text.Encoding]::UTF8)
+          Write-Host "Changelog written to changelog.md ($((Get-Item changelog.md).Length) bytes)"
+
+      # --------------------------------------------------------------
+      # Crea (o aggiorna) una release GitHub con tag vX.Y.Z
+      # (versione calcolata sopra). Allega l'installer e usa il
+      # changelog generato come body. NON marca la release come draft
+      # in modo che release-bump.yml possa reagire a published.
+      # --------------------------------------------------------------
+      - name: Create or update GitHub release v${{ env.MYAPP_VERSION }}
         if: startsWith(github.ref, 'refs/heads/master')
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
-          $tag   = "build-${{ github.sha }}"
-          $title = "RelicToEpub build ${{ github.sha }}"
+          $tag   = "v${{ env.MYAPP_VERSION }}"
+          $title = "RelicToEpub ${{ env.MYAPP_VERSION }}"
           $sizeMB = [math]::Round($env:INSTALLER_SIZE / 1MB, 1)
-          $body  = @"
-          ## Build `${{ github.sha }}
+          $notes = Get-Content -Raw -Encoding utf8 changelog.md
+          $header = @"
+          ## RelicToEpub `${{ env.MYAPP_VERSION }}
 
-          - Branch:   `${{ github.ref_name }}
-          - Commit:   `${{ github.sha }}
-          - Author:   `${{ github.actor }}
-          - Workflow: `${{ github.workflow }} @ `${{ github.run_id }}
-          - Date:     `${{ github.event.head_commit.timestamp }}
+          - Commit: `${{ github.sha }}
+          - Branch: `${{ github.ref_name }}
+          - Built:  `${{ github.event.head_commit.timestamp }}
+          - Installer: `${{ env.INSTALLER_NAME }}  ($sizeMB MB)
 
-          Installer: `${{ env.INSTALLER_NAME }}  ($sizeMB MB)
+          ---
           "@
+          $body = $header + "`n" + $notes
           $existing = gh release view $tag --json tagName 2>$null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag exists - updating asset"
+            Write-Host "Release $tag exists - updating asset and notes"
             gh release upload $tag $env:INSTALLER_PATH --clobber | Out-Null
-            gh release edit  $tag --title $title --notes $body | Out-Null
+            $tmp = [System.IO.Path]::GetTempFileName()
+            [System.IO.File]::WriteAllText($tmp, $body, [System.Text.Encoding]::UTF8)
+            gh release edit  $tag --title $title --notes-file $tmp | Out-Null
+            Remove-Item $tmp
           } else {
-            Write-Host "Creating new draft release $tag"
+            Write-Host "Creating release $tag"
+            $tmp = [System.IO.Path]::GetTempFileName()
+            [System.IO.File]::WriteAllText($tmp, $body, [System.Text.Encoding]::UTF8)
             $ghArgs = @(
               $tag,
               $env:INSTALLER_PATH,
               "--title", $title,
-              "--notes", $body,
-              "--draft",
+              "--notes-file", $tmp,
               "--target", "${{ github.sha }}"
             )
             gh release create @ghArgs | Out-Null
+            Remove-Item $tmp
           }
-          if ($LASTEXITCODE -ne 0) { throw "gh release (build-sha) failed" }
+          if ($LASTEXITCODE -ne 0) { throw "gh release v${{ env.MYAPP_VERSION }} failed" }
 
-      # --------------------------------------------------------------
-      # Mantiene una release rolling latest sempre aggiornata.
-      # --------------------------------------------------------------
-      - name: Update "latest" rolling release
-        if: startsWith(github.ref, 'refs/heads/master')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $tag  = "latest"
-          $sizeMB = [math]::Round($env:INSTALLER_SIZE / 1MB, 1)
-          $body = @"
-          ## Latest build from master
-
-          - Commit:  `${{ github.sha }}
-          - Built:   `${{ github.event.head_commit.timestamp }}
-          - Run:     `${{ github.run_id }}
-
-          Installer: `${{ env.INSTALLER_NAME }}  ($sizeMB MB)
-          "@
-          $existing = gh release view $tag --json tagName 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag exists - updating asset"
-            gh release upload $tag $env:INSTALLER_PATH --clobber | Out-Null
-            gh release edit  $tag --notes $body | Out-Null
-          } else {
-            Write-Host "Creating rolling release $tag"
-            $ghArgs = @(
-              $tag,
-              $env:INSTALLER_PATH,
-              "--title", "RelicToEpub (latest rolling)",
-              "--notes", $body,
-              "--target", "${{ github.sha }}"
-            )
-            gh release create @ghArgs | Out-Null
-          }
-          if ($LASTEXITCODE -ne 0) { throw "gh release (latest) failed" }
+      - name: Upload changelog artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RelicToEpub-changelog
+          path: changelog.md
+          if-no-files-found: ignore
+          retention-days: 30
