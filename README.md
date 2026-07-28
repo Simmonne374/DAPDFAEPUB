@@ -81,6 +81,22 @@ Per pre-scaricarlo:
 huggingface-cli download baidu/Unlimited-OCR --include "*.safetensors" "*.json" "*.py"
 ```
 
+### Installazione con l'installer Windows (utenti finali)
+
+Per l'utente finale è disponibile un installer Inno Setup che pacchettizza
+tutto (Python, dipendenze, pandoc). Vedi [`docs/INSTALL_WINDOWS.md`](docs/INSTALL_WINDOWS.md).
+
+**Note di path**:
+
+- L'installer crea le icone di collegamento sul **desktop dell'utente corrente**
+  (non sul Desktop Pubblico, che richiederebbe privilegi admin aggiuntivi).
+- La cartella di installazione richiede privilegi di amministratore
+  (è in `%ProgramFiles%\RelicToEpub`).
+- Se devi installare su una USB, installa una prima volta su un sistema
+  "fisso" per popolare la cache wheel torch (~1.5 GB) e il modello OCR
+  (~6 GB) in `%LOCALAPPDATA%\RelicToEpub\`: queste verranno riutilizzate
+  alla successiva installazione, evitando di riscaricare decine di GB.
+
 ## Utilizzo
 
 ### CLI — singolo libro

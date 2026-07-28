@@ -17,10 +17,17 @@ from __future__ import annotations
 import os
 import socket
 import sys
+import tkinter as tk
 from datetime import datetime
 from pathlib import Path
+from tkinter import ttk
 
 APP_VERSION = "0.1.0"
+
+# Lettere di unita storicamente non scrivibili su Windows moderni (floppy).
+# Vengono usate in _self_check per intercettare shortcut orfani che puntano
+# a unita non piu presenti (es. bug "A:\\RelicToEpub" -> CreateProcess: 5).
+_LETTERE_FLOPPY = {"A", "B"}
 
 
 def _project_paths() -> tuple[Path, Path]:
@@ -54,6 +61,145 @@ def _setup_logging() -> Path:
         return log_path
     except OSError:
         return Path()
+
+
+def _log_diagnostic(message: str) -> None:
+    """Scrive un messaggio diagnostico nel log dedicato ``launcher_selfcheck.log``."""
+    try:
+        local = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))
+        log_dir = Path(local) / "RelicToEpub" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "launcher_selfcheck.log"
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {message}\n")
+    except OSError:
+        pass  # diagnostico, mai bloccante
+
+
+def _show_repair_dialog(detail: str) -> None:
+    """Mostra una finestra tkinter con istruzioni chiare per riparare l'installazione.
+
+    Usata quando _self_check rileva problemi gravi (es. exe inesistente,
+    percorso di installazione invalido). L'utente vede cosa e andato storto
+    invece del generico "Impossibile eseguire il file: A:\\RelicToEpub".
+    """
+    try:
+        local = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))
+        log_dir = Path(local) / "RelicToEpub" / "logs"
+    except OSError:
+        log_dir = Path(".")  # noqa: F841 (solo placeholder)
+
+    root = tk.Tk()
+    root.title(f"RelicToEpub {APP_VERSION} - Problema di avvio")
+    root.geometry("560x280")
+    root.resizable(False, False)
+    # Impedisci chiusura con X finestra (l'utente deve cliccare "Chiudi")
+    root.protocol("WM_DELETE_WINDOW", lambda: None)
+
+    try:
+        # Icona di errore (cross rossa) — nativo tkinter, niente deps
+        root.iconbitmap(default="")  # lascia l'icona di default
+    except tk.TclError:
+        pass
+
+    frame = ttk.Frame(root, padding=20)
+    frame.pack(fill="both", expand=True)
+
+    icon_label = ttk.Label(frame, text="\u26A0", font=("Segoe UI", 28))
+    icon_label.pack(side="left", anchor="n", padx=(0, 16))
+
+    text_frame = ttk.Frame(frame)
+    text_frame.pack(side="left", fill="both", expand=True)
+
+    title_label = ttk.Label(
+        text_frame,
+        text="L'applicazione non riesce ad avviarsi",
+        font=("Segoe UI", 11, "bold"),
+    )
+    title_label.pack(anchor="w")
+
+    detail_label = ttk.Label(
+        text_frame,
+        text=detail,
+        wraplength=400,
+        justify="left",
+    )
+    detail_label.pack(anchor="w", pady=(8, 8))
+
+    help_label = ttk.Label(
+        text_frame,
+        text=(
+            "Procedura di ripristino:\n"
+            "1. Apri Impostazioni di Windows -> App -> RelicToEpub -> Disinstalla.\n"
+            "2. Rilancia l'installer RelicToEpub-Setup scaricato dal sito ufficiale.\n"
+            "3. Se il problema persiste, apri una segnalazione e allega il file:\n"
+            "   %LOCALAPPDATA%\\RelicToEpub\\logs\\launcher_selfcheck.log"
+        ),
+        wraplength=400,
+        justify="left",
+        foreground="#404040",
+    )
+    help_label.pack(anchor="w", pady=(4, 4))
+
+    btn = ttk.Button(text_frame, text="Chiudi", command=root.destroy)
+    btn.pack(anchor="e", pady=(12, 0))
+
+    root.mainloop()
+
+
+def _self_check() -> bool:
+    """Verifica che il percorso di esecuzione sia realistico.
+
+    Ritorna True se va tutto bene. False se abbiamo rilevato un problema serio
+    (in tal caso _run_with_selfcheck decide se mostrare una UI di riparazione
+    o solo loggare e procedere).
+
+    Cosa controlla:
+    1. ``sys.executable`` esiste sul disco (non e un fantasma).
+    2. Non e su una unita floppy (A:\\, B:\\) che potrebbe essere scollegata.
+    3. La cartella di installazione contiene almeno un file .expected.txt
+       o l'exe di bootstrap (sanity check minimo).
+    """
+    try:
+        exe = Path(sys.executable)
+    except (OSError, ValueError) as exc:
+        _log_diagnostic(f"sys.executable non recuperabile: {exc}")
+        return False
+
+    # Test 1: il file esiste davvero?
+    if not exe.exists():
+        _log_diagnostic(f"sys.executable inesistente: {exe}")
+        return False
+
+    # Test 2: drive letter sospetto? (A: o B: sono floppy disk storici)
+    drive = exe.drive or ""
+    if drive.rstrip(":").upper() in _LETTERE_FLOPPY:
+        _log_diagnostic(
+            f"sys.executable punta a unita floppy {drive!r}: {exe} "
+            f"(probabile shortcut orfano a una USB rimossa)"
+        )
+        return False
+
+    # Test 3: la cartella genitore deve essere coerente con un'installazione
+    # di RelicToEpub. Controlliamo che esista almeno il bootstrap (RelicToEpubBoot.exe)
+    # o un file _internal/ che ci si aspetta dal bundle PyInstaller.
+    parent = exe.parent
+    expected_markers = [
+        parent / "RelicToEpubBoot.exe",
+        parent / "_internal",
+        parent / "RelicToEpubUI.exe",  # siamo RelicToEpubUI.exe
+        parent / "RelicToEpubCLI.exe",  # oppure CLI
+    ]
+    if not any(m.exists() for m in expected_markers):
+        _log_diagnostic(
+            f"Nessun marker di installazione RelicToEpub trovato in {parent}. "
+            f"exe={exe}; cartella probabilmente errata."
+        )
+        return False
+
+    _log_diagnostic(f"Self-check OK: {exe}")
+    return True
 
 
 def _check_boot() -> None:
@@ -115,6 +261,31 @@ def main(argv: list[str] | None = None) -> int:
     if log_path:
         sys.stdout.write(f"[launch_ui_launcher] Log: {log_path}\n")
         sys.stdout.flush()
+
+    # Self-check: intercetta installazioni corrotte o shortcut orfani.
+    # In modalita dev (sys.executable = python.exe) lo skippiamo per
+    # non rompere il workflow degli sviluppatori.
+    is_bundled = getattr(sys, "frozen", False) or (
+        "RelicToEpub" in sys.executable
+        and Path(sys.executable).suffix.lower() == ".exe"
+    )
+    if is_bundled and not _self_check():
+        detail = (
+            "Il file di avvio dell'applicazione punta a un percorso non valido "
+            f"({sys.executable}).\n\n"
+            "Causa probabile: l'installer e stato eseguito da una unita rimovibile "
+            "(USB, floppy disk) ora scollegata, oppure l'installazione e stata "
+            "spostata/cancellata dopo l'installazione."
+        )
+        try:
+            _show_repair_dialog(detail)
+        except tk.TclError:
+            # Tkinter non disponibile: fallback al solo log
+            _log_diagnostic(
+                f"tkinter non disponibile per self-check UI; "
+                f"sys.executable={sys.executable}"
+            )
+        return 4  # codice distinto per "self-check fallito"
 
     _check_boot()
 

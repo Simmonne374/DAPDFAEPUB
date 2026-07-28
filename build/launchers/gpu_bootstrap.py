@@ -412,6 +412,118 @@ def _set_app_exe_path(p: Path) -> None:
     _app_exe_path = p
 
 
+# Lettere di unita storicamente non scrivibili su Windows moderni (floppy).
+# Usate in _check_install_path per intercettare percorsi invalidi tipo
+# "A:\\RelicToEpub" che arrivano da shortcut orfani o vecchie installazioni.
+_LETTERE_FLOPPY = {"A", "B"}
+
+
+def _log_selfcheck(message: str) -> None:
+    """Appende un messaggio al log di diagnostica ``launcher_selfcheck.log``."""
+    try:
+        local = os.environ.get(
+            "LOCALAPPDATA", str(Path.home() / "AppData/Local")
+        )
+        log_dir = Path(local) / "RelicToEpub" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "launcher_selfcheck.log"
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(f"[{ts}] [bootstrap] {message}\n")
+    except OSError:
+        pass  # diagnostico, mai bloccante
+
+
+def _check_install_path(app_exe: Path) -> None:
+    """Valida il percorso di installazione per intercettare shortcut orfani.
+
+    Puo essere chiamato PRIMA dell'avvio del bootstrap vero (per fallire
+    precocemente senza scaricare nulla) e DURANTE l'avvio (per logging).
+
+    Cosa controlla:
+    1. L'exe padre esiste ed e un Path risolvibile.
+    2. L'exe padre non risiede in una unita floppy (A:\\, B:\\).
+    3. La cartella di installazione contiene almeno un marker dell'app
+       (``RelicToEpubBoot.exe``, ``_internal\\``, ecc.).
+    4. (Opzionale) Coerenza con la chiave di registro Uninstall: se il path
+       corrente differisce dal ``InstallLocation`` registrato, logga un
+       warning (l'utente ha spostato l'app o sta usando un exe portatile).
+
+    NON solleva eccezioni: in caso di anomalia logga diagnostic, imposta
+    env var ``RELICTOEPUB_PATH_WARNING=1`` e prosegue (per non rompere
+    installazioni leggittime "a mano").
+    """
+    issues: list[str] = []
+
+    try:
+        if not app_exe.exists():
+            issues.append(f"app_exe non esistente: {app_exe}")
+    except OSError as exc:
+        issues.append(f"app_exe.errore_accesso: {exc}")
+
+    drive = app_exe.drive or ""
+    if drive.rstrip(":").upper() in _LETTERE_FLOPPY:
+        issues.append(
+            f"app_exe punta a unita floppy {drive!r} ({app_exe}): "
+            f"probabile shortcut orfano a USB rimossa"
+        )
+
+    parent = app_exe.parent
+    expected_markers = [
+        parent / "RelicToEpubBoot.exe",
+        parent / "_internal",
+        parent / "RelicToEpubUI.exe",
+        parent / "RelicToEpubCLI.exe",
+    ]
+    if not any(m.exists() for m in expected_markers):
+        issues.append(
+            f"Nessun marker RelicToEpub nella cartella {parent}: "
+            f"probabile installazione corrotta o spostata"
+        )
+
+    # Warning se il path diverge dalla chiave di registro di disinstallazione
+    try:
+        import winreg  # type: ignore  # noqa: F401
+        # Apriamo HKLM\...\Uninstall\{AppId}_is1 / InstallLocation
+        appid_guid = "{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}"
+        reg_paths = [
+            (winreg.HKEY_LOCAL_MACHINE, appid_guid),
+            (winreg.HKEY_CURRENT_USER, appid_guid),
+        ]
+        for hive, guid in reg_paths:
+            try:
+                with winreg.OpenKey(
+                    hive,
+                    f"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\"
+                    f"Uninstall\\{guid}_is1",
+                ) as key:
+                    registered, _ = winreg.QueryValueEx(
+                        key, "InstallLocation"
+                    )
+                if registered and registered != str(parent):
+                    issues.append(
+                        f"path diverge da registro "
+                        f"({registered} vs {parent}): probabile "
+                        f"installazione spostata manualmente"
+                    )
+                break
+            except OSError:
+                continue
+    except ImportError:
+        # Non Windows o winreg non disponibile: skip silenzioso.
+        pass
+
+    if issues:
+        os.environ["RELICTOEPUB_PATH_WARNING"] = "1"
+        for issue in issues:
+            _log_selfcheck(issue)
+        # Lo state verra impostato a runtime se disponibile; qui logghiamo
+        # direttamente per i casi in cui lo splash non e ancora attivo.
+        sys.stderr.write(
+            f"[gpu_bootstrap] ATTENZIONE: {' | '.join(issues)}\n"
+        )
+
+
 # ============================================================
 # Verifica cache wheel
 # ============================================================
@@ -490,6 +602,19 @@ def main(argv: list[str]) -> int:
     if not app_exe.exists():
         state.error(f"App launcher non trovato: {app_exe}")
         return 66
+
+    # Validazione del percorso di installazione PRIMA di procedere.
+    # Se troviamo problemi gravi (es. percorso su unita floppy inesistente,
+    # nessun marker RelicToEpub nella cartella), falliamo SUBITO con un
+    # messaggio comprensibile invece di crashare con "CreateProcess: 5"
+    # molto piu tardi dentro Windows.
+    _check_install_path(app_exe)
+    if os.environ.get("RELICTOEPUB_PATH_WARNING") == "1":
+        sys.stderr.write(
+            f"[gpu_bootstrap] Percorso di installazione sospetto "
+            f"({app_exe.parent}). Vedi launcher_selfcheck.log per "
+            f"dettagli.\n"
+        )
 
     _set_app_exe_path(app_exe)
 
