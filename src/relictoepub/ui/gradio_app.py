@@ -19,21 +19,25 @@ from pathlib import Path
 
 import gradio as gr
 
-
 from relictoepub.compile.build_epub import BookMetadata
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.pipeline import Pipeline, ProgressEvent
 from relictoepub.ui.components import (
     advanced_options,
+    check_model_status,
+    destination_folder,
     epub_download,
     gallery_preview,
     log_panel,
     upload_pdf,
-    check_model_status,
-    destination_folder,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _toggle_run_button(pdf_path: str | None) -> dict:
+    """Abilita la conversione solo quando Gradio fornisce un file PDF."""
+    return gr.update(interactive=bool(pdf_path))
 
 
 def _format_event(event: ProgressEvent) -> str:
@@ -71,9 +75,9 @@ def _run_pipeline(
         yield f"❌ File non valido: {pdf_path}", gallery, None, gr.update()
         return
 
+    import shutil
     import tempfile
     import uuid
-    import shutil
 
     # Definisci il path temporaneo sicuro in cui compilare l'EPUB (per bypassare la sandbox Gradio)
     temp_output_epub = Path(tempfile.gettempdir()) / f"relictoepub_{uuid.uuid4().hex[:8]}.epub"
@@ -244,13 +248,20 @@ def build_demo() -> gr.Blocks:
                     opts["title"].render()
                     opts["author"].render()
 
-                run_btn = gr.Button("🚀 Converti in EPUB", variant="primary", size="lg")
+                run_btn = gr.Button("🚀 Converti in EPUB", variant="primary", size="lg", interactive=False)
 
             # ============= COLONNA DESTRA — output =============
             with gr.Column(scale=1):
                 log = log_panel()
                 gallery = gallery_preview()
                 download = epub_download()
+
+        # Wiring per abilitare il bottone di conversione solo quando un PDF è selezionato
+        pdf_input.change(
+            fn=_toggle_run_button,
+            inputs=[pdf_input],
+            outputs=[run_btn],
+        )
 
         # Wiring per il download del modello
         download_btn.click(

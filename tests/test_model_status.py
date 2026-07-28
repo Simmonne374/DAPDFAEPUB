@@ -1,5 +1,7 @@
 from unittest.mock import patch
+
 from relictoepub.ui.components import check_model_status
+
 
 def test_check_model_status_real():
     is_ok, status_str = check_model_status("baidu/Unlimited-OCR")
