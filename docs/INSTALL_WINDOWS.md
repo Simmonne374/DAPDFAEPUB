@@ -98,28 +98,125 @@ Anche dopo l'installazione di torch, serve **scaricare il modello di OCR** (~6 G
 
 Da **Impostazioni → App → RelicToEpub → Disinstalla**, oppure da Start Menu → **Disinstalla RelicToEpub**.
 
-Vengono rimossi:
+Vengono rimossi automaticamente:
 
-- File in `Program Files\RelicToEpub`
-- Voci di registro
-- Icone desktop e Start Menu
+- Tutti i file in `Program Files\RelicToEpub` (eseguibili, `_internal\` con Python
+  + dipendenze, MSI di pandoc, log, file temporanei e la cartella di
+  installazione stessa se vuota)
+- Icone sul **desktop dell'utente corrente**
+- Voci nel menu Start (programma, CLI, voce "Disinstalla")
+- **Chiavi di registro** di disinstallazione (HKLM/HKCU)
+- **Shortcut orfani residui** da installazioni precedenti (es. link rimasti
+  in Start Menu che puntavano a unita rimovibili ora scollegate —
+  vedi sezione 6 per dettagli)
 
-**Non** vengono rimossi (sono in `AppData` / PATH):
+Opzionalmente, **durante l'installazione iniziale** puoi spuntare la voce
+**"Rimuovi anche cache e modello OCR (~7 GB in AppData)"**. Quando attiva,
+la disinstallazione elimina anche:
 
 - Cache wheel torch (`%LOCALAPPDATA%\RelicToEpub\torch_wheel_cache\`)
 - Modello OCR scaricato (`%LOCALAPPDATA%\RelicToEpub\models\`)
-- Pandoc (rimane installato, può servire ad altre app)
+- Log diagnostici (`%LOCALAPPDATA%\RelicToEpub\logs\`)
 
-Per rimuovere anche questi, esegui questi comandi:
+> **Nota**: la cache wheel (~1.5 GB) e il modello OCR (~6 GB) sono
+> riutilizzati se reinstalli l'app. Rimuovili solo se vuoi liberare
+> spazio disco in modo aggressivo.
+
+**Non** viene rimosso:
+
+- **pandoc** — resta installato a livello di sistema tramite il suo MSI,
+  perche puo servire ad altre applicazioni. Per disinstallarlo:
+  ```cmd
+  msiexec /x {97D20B66-CE32-4AAB-83A9-674A1B6F1C8F}
+  ```
+
+### Procedura manuale di "pulizia profonda"
+
+Se dopo la disinstallazione trovi ancora residui (es. per via di un
+install corrotto), esegui:
 
 ```cmd
+:: Cartella installazione (solo se diversa da quella che abbiamo appena cancellato)
+rmdir /s /q "%ProgramFiles%\RelicToEpub"
+
+:: Cache, log, modello (se hai saltato il task "removecache")
 rmdir /s /q "%LOCALAPPDATA%\RelicToEpub"
-msiexec /x {97D20B66-CE32-4AAB-83A9-674A1B6F1C8F}    :: rimuove pandoc
+
+:: Start Menu (in rari casi non si svuota automaticamente)
+rmdir /s /q "%AppData%\Microsoft\Windows\Start Menu\Programs\RelicToEpub"
+
+:: Icone desktop se rimaste
+del /q "%USERPROFILE%\Desktop\RelicToEpub.lnk"
+del /q "%USERPROFILE%\Desktop\RelicToEpub (CLI).lnk"
+
+:: Registro (se l'uninstall ha fallito a meta)
+reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}_is1" /f
+reg delete "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}_is1" /f
 ```
+
+### Log diagnostici della disinstallazione
+
+Ogni run di installazione **e** disinstallazione scrive un log in
+`%LOCALAPPDATA%\RelicToEpub\logs\`:
+
+| File | Contenuto |
+|------|-----------|
+| `installer.log` | Installazioni (con warning su path sospetti, registry) |
+| `uninstaller.log` | Disinstallazioni (con elenco shortcut orfani rimossi) |
 
 ---
 
 ## 6. Risoluzione problemi
+
+### "IPersistFile::Save failed; codice 0x80070005. Accesso negato."
+Questo errore capitava nelle versioni 0.1.0 quando l'installer tentava di
+creare un'icona sul **Desktop Pubblico** (`C:\Users\Public\Desktop`).
+Dalla 0.1.1 in poi:
+
+- Le icone desktop puntano al **desktop dell'utente corrente**
+  (`%USERPROFILE%\Desktop` = `{userdesktop}`), che non richiede
+  privilegi di amministratore
+- L'installer verifica la scrivibilita della destinazione e, seppure
+  in circostanze estreme non riesca a creare lo shortcut, lo **salta**
+  silenziosamente senza abortire l'installazione
+
+Se incontri ancora questo errore con una versione recente:
+
+1. Verifica di star eseguendo l'ultima release (vedi [Releases](../../releases))
+2. Prova a disabilitare temporaneamente l'antivirus: alcuni software
+   di protezione iniettano hook in `IPersistFile::Save` che confondono
+   l'installer
+3. Apri una segnalazione allegando il log
+   `%LOCALAPPDATA%\RelicToEpub\logs\installer.log`
+
+### "Impossibile eseguire il file: A:\RelicToEpub — CreateProcess: 5. Accesso negato."
+Questo errore tipicamente compare provando a cliccare un'icona di Start
+Menu che punta a un percorso **inesistente** (es. una chiavetta USB
+montata un tempo come `A:`, ora scollegata). Lo shortcut e un **residuo
+orfano** di una installazione precedente.
+
+Dalla versione 0.1.1:
+
+- La disinstallazione esegue una **scansione automatica** di tutti i
+  collegamenti `.lnk` / `.url` nelle directory `{group}`, `{userdesktop}`
+  e `{commondesktop}`, e rimuove quelli "orfani" (cioe che puntano a
+  eseguibili RelicToEpub non piu presenti su disco)
+- Quando provi a lanciare l'app da uno shortcut orfano, ora vedrai
+  una **finestra diagnostica** ("L'applicazione non riesce ad avviarsi")
+  con istruzioni chiare per ripristinare, invece del messaggio generico
+  di Windows
+
+Per riparare manualmente:
+
+1. Apri `Impostazioni di Windows → App → RelicToEpub → Disinstalla`
+2. Rilancia l'ultimo installer RelicToEpub-Setup scaricato dal sito
+   ufficiale
+3. Se il problema persiste, elimina manualmente le icone orfane:
+   ```cmd
+   del /q "%USERPROFILE%\Desktop\RelicToEpub.lnk"
+   rmdir /s /q "%AppData%\Microsoft\Windows\Start Menu\Programs\RelicToEpub"
+   ```
+   e reinstalla
 
 ### "msiexec error 2502/2503" durante l'installazione di pandoc
 L'utente non ha diritti di amministratore. L'installer di Inno Setup richiede privilegi elevati per installare pandoc, quindi rilancialo come amministratore (click destro → Esegui come amministratore).
@@ -133,6 +230,19 @@ Aggiorna i driver NVIDIA da [nvidia.com/drivers](https://www.nvidia.com/drivers)
 3. Se l'output mostra `CUDA available: False`, controlla che:
    - I driver NVIDIA siano aggiornati
    - Il wheel torch scaricato corrisponda al tuo hardware (vedi log in `%LOCALAPPDATA%\RelicToEpub\logs\gpu_bootstrap.log`)
+
+### Cache wheel torch / modello OCR non rimossi dopo disinstallazione
+Questo e il **comportamento corretto di default**: cache e modello sono
+riutilizzati se reinstalli l'app, evitando di riscaricare 7 GB.
+Per rimuoverli, alla (re)installazione spunta la voce
+**"Rimuovi anche cache e modello OCR"** — la disinstallazione successiva
+pulira anche queste directory.
+
+Oppure rimuovili manualmente:
+
+```cmd
+rmdir /s /q "%LOCALAPPDATA%\RelicToEpub"
+```
 
 ### SmartScreen / Antivirus bloccano l'eseguibile
 PyInstaller è occasionalmente flaggato come sospetto. Soluzioni:
