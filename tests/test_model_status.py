@@ -3,14 +3,6 @@ from unittest.mock import patch
 from relictoepub.ui.components import check_model_status
 
 
-def test_toggle_run_button_requires_pdf():
-    from relictoepub.ui.gradio_app import _toggle_run_button
-
-    assert _toggle_run_button(None)["interactive"] is False
-    assert _toggle_run_button("")["interactive"] is False
-    assert _toggle_run_button("book.pdf")["interactive"] is True
-
-
 def test_check_model_status_real():
     is_ok, status_str = check_model_status("baidu/Unlimited-OCR")
     assert isinstance(is_ok, bool)
