@@ -21,7 +21,6 @@ mostri sempre cosa sta succedendo (mai "sospeso" >2 s).
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -251,7 +250,6 @@ def download_with_progress(url: str, dest: Path, state: ProgressState, *, timeou
 
                 started = time.time()
                 last_chunk_time = time.time()
-                last_logged = downloaded
                 last_log_time = time.time()
 
                 with dest.open(mode) as f:
@@ -283,7 +281,6 @@ def download_with_progress(url: str, dest: Path, state: ProgressState, *, timeou
                                                 eta_seconds=eta,
                                             )
                                             last_log_time = now
-                                            last_logged = downloaded
 
                 # Download completato: scrivi stato finale
                 elapsed = max(0.001, time.time() - started)

@@ -13,8 +13,6 @@ PyInstaller li usa per determinare cosa includere nel bundle.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 
 from PyInstaller.utils.hooks import (
     collect_data_files,

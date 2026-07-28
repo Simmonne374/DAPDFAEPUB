@@ -244,13 +244,20 @@ def build_demo() -> gr.Blocks:
                     opts["title"].render()
                     opts["author"].render()
 
-                run_btn = gr.Button("🚀 Converti in EPUB", variant="primary", size="lg")
+                run_btn = gr.Button("🚀 Converti in EPUB", variant="primary", size="lg", interactive=False)
 
             # ============= COLONNA DESTRA — output =============
             with gr.Column(scale=1):
                 log = log_panel()
                 gallery = gallery_preview()
                 download = epub_download()
+
+        # Wiring per abilitare il bottone di conversione solo quando un PDF è selezionato
+        pdf_input.change(
+            fn=lambda file: gr.update(interactive=file is not None),
+            inputs=[pdf_input],
+            outputs=[run_btn],
+        )
 
         # Wiring per il download del modello
         download_btn.click(
