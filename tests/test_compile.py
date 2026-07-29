@@ -18,12 +18,11 @@ from relictoepub.compile.build_epub import (
     build_epub,
 )
 
-
 # Skip automatico se pandoc non è installato
 try:
     _check_pandoc()
     has_pandoc = True
-except Exception:
+except RuntimeError:
     has_pandoc = False
 
 pytestmark = pytest.mark.skipif(
@@ -92,7 +91,7 @@ def test_chapter_info_dataclass() -> None:
 # Adaptive chapter splitting (Item 3)
 # ----------------------------------------------------------------------
 
-from relictoepub.compile.build_epub import _split_into_chapters  # noqa: E402
+from relictoepub.compile.build_epub import _split_into_chapters
 
 
 def _make_md(n_h1: int = 0, n_h2: int = 0, n_pages: int = 0) -> str:

@@ -16,7 +16,6 @@ from relictoepub.postprocess.bbox_crop import (
 from relictoepub.postprocess.text_clean import clean_text, count_words
 from relictoepub.postprocess.webp_optim import optimize_batch, optimize_for_eink
 
-
 # ============================================================
 # bbox_crop
 # ============================================================

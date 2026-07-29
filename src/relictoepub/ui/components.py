@@ -26,12 +26,12 @@ def quantization_choices() -> tuple[list, str]:
     try:
         import torch
         cuda_ok = torch.cuda.is_available()
-    except Exception:
+    except ImportError:
         cuda_ok = False
     try:
         import bitsandbytes  # noqa: F401
         bnb_ok = True
-    except Exception:
+    except ImportError:
         bnb_ok = False
     if not cuda_ok or not bnb_ok:
         return [choices[2]], "none"
@@ -64,7 +64,7 @@ def check_model_status(model_id: str = "baidu/Unlimited-OCR") -> tuple[bool, str
         single_path = try_to_load_from_cache(model_id, "model.safetensors")
         if isinstance(single_path, str):
             return True, "🟢 **Modello rilevato localmente** (pronto all'uso)"
-    except Exception:
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         pass
     return False, "🔴 **Modello non presente localmente** (scaricalo ora o verrà scaricato al primo avvio)"
 

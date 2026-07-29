@@ -18,7 +18,6 @@ from relictoepub.compile.build_epub import BookMetadata
 from relictoepub.inference.config import InferenceConfig
 from relictoepub.pipeline import Pipeline, ProgressEvent
 
-
 # Skip se pandoc mancante (build_epub lo richiede)
 pytestmark = pytest.mark.skipif(
     shutil.which("pandoc") is None,

@@ -17,17 +17,17 @@ Flusso:
 from __future__ import annotations
 
 import logging
-import time
 import re
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from relictoepub.compile.build_epub import BookMetadata, build_epub
-from relictoepub.ingest import render_pdf
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
+from relictoepub.ingest import render_pdf
 from relictoepub.postprocess.bbox_crop import (
     BBox,
     crop_image_from_bbox,
@@ -108,7 +108,7 @@ def check_model_available(model_id: str = "baidu/Unlimited-OCR") -> bool:
                 path_or_tuple = result if isinstance(result, tuple) else (result,)
                 if path_or_tuple and path_or_tuple[0] is not None:
                     return True
-    except Exception:
+    except (OSError, ValueError, TypeError, AttributeError):
         # Qualsiasi errore (modello non esistente, no internet, ecc.) → non disponibile
         return False
     return False
@@ -308,21 +308,23 @@ class Pipeline:
                 )
                 
                 img_counter = 0
-                def replace_tag(match):
+                page_num = page.page_num  # bind for closure (B023)
+                page_path = page.original_path  # bind for closure (B023)
+                def replace_tag(match, _pn=page_num, _pp=page_path):
                     nonlocal img_counter
                     label = match.group(1).strip()
                     x1, y1, x2, y2 = (int(g) for g in match.groups()[1:5])
                     bbox = BBox(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label)
-                    
+
                     if label in ("image", "figure", "table"):
                         img_label = f"{label}{img_counter}"
                         img_counter += 1
                         ext = ".webp" if self.eink_optimize else ".png"
-                        out_filename = f"page{page.page_num:04d}_{img_label}{ext}"
-                        out_path = crops_dir / f"page{page.page_num:04d}_{img_label}.png"
-                        
+                        out_filename = f"page{_pn:04d}_{img_label}{ext}"
+                        out_path = crops_dir / f"page{_pn:04d}_{img_label}.png"
+
                         result_path = crop_image_from_bbox(
-                            page.original_path, bbox, output_path=out_path, target_size=self.target_size
+                            _pp, bbox, output_path=out_path, target_size=self.target_size
                         )
                         if result_path and result_path.exists():
                             saved_crops.append(result_path)
@@ -402,9 +404,9 @@ class Pipeline:
 
 
 __all__ = [
+    "ModelNotFoundError",
     "Pipeline",
     "PipelineResult",
     "ProgressEvent",
-    "ModelNotFoundError",
     "check_model_available",
 ]

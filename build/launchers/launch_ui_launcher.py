@@ -22,7 +22,13 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import ttk
 
-APP_VERSION = "0.1.0"
+# Versione letta dinamicamente dal pacchetto (single source of truth:
+# pyproject.toml). In caso di bundle PyInstaller che non include i metadata
+# importlib.metadata cade sul fallback "0.0.0+unknown".
+try:
+    from relictoepub import __version__ as APP_VERSION
+except Exception:
+    APP_VERSION = "0.0.0+unknown"
 
 # Lettere di unita storicamente non scrivibili su Windows moderni (floppy).
 # Vengono usate in _self_check per intercettare shortcut orfani che puntano
