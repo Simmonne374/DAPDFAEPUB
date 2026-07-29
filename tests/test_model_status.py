@@ -23,7 +23,11 @@ def test_check_model_status_cached():
 
 def test_check_model_status_not_cached():
     with patch("relictoepub.ui.components.try_to_load_from_cache") as mock_load:
-        mock_load.side_effect = Exception("Not found in cache")
+        # Simula un errore di I/O sulla cache (es. cache corrotta o permessi mancanti).
+        # In condizioni normali un file mancante viene restituito come ``None`` (vedi
+        # ``test_check_model_status_returns_none``); qui testiamo invece il ramo
+        # di fallback quando l'accesso alla cache genera un'eccezione reale.
+        mock_load.side_effect = OSError("Cache directory unreadable")
         is_ok, status_str = check_model_status("baidu/Unlimited-OCR")
         assert is_ok is False
         assert "🔴 **Modello non presente localmente**" in status_str
