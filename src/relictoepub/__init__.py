@@ -23,7 +23,7 @@ try:
         __version__ = _pkg_version("relictoepub")
     except PackageNotFoundError:
         __version__ = "0.0.0+unknown"
-except Exception:  # pragma: no cover - importlib.metadata sempre disponibile in Py3.10+
+except ImportError:  # pragma: no cover - importlib.metadata sempre disponibile in Py3.10+
     __version__ = "0.0.0+unknown"
 
 __all__ = ["__version__"]
