@@ -16,9 +16,9 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 import pymupdf as fitz  # PyMuPDF
 from PIL import Image
@@ -79,8 +79,8 @@ def _normalize_to_square(pil_image: Image.Image, target_size: int) -> Image.Imag
 
     # Scala l'immagine per riempire il lato lungo mantenendo aspect ratio
     scale = target_size / max(w, h)
-    new_w = max(1, int(round(w * scale)))
-    new_h = max(1, int(round(h * scale)))
+    new_w = max(1, round(w * scale))
+    new_h = max(1, round(h * scale))
     resized = pil_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
     # Canvas quadrato bianco

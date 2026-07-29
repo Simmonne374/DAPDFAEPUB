@@ -15,8 +15,8 @@ L'ottimizzazione è opzionale ma raccomandata per EPUB destinati a E-ink.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from PIL import Image, ImageEnhance, ImageOps
 
@@ -119,4 +119,4 @@ def optimize_batch(
     return results
 
 
-__all__ = ["optimize_for_eink", "optimize_batch"]
+__all__ = ["optimize_batch", "optimize_for_eink"]

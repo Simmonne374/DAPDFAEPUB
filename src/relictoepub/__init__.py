@@ -4,8 +4,8 @@
 # raccogliere tramite l'analisi statica perché Gradio le importa in modo
 # dinamico/lazy. Senza questi import, ``import groovy`` fallisce a runtime
 # perché il bytecode non finisce nel PYZ di PyInstaller.
-import groovy  # noqa: F401  # type: ignore
-import safehttpx  # noqa: F401  # type: ignore
+import groovy  # type: ignore # noqa: F401
+import safehttpx  # type: ignore # noqa: F401
 
 # Versione single-source-of-truth: legge da pyproject.toml via importlib.metadata
 # in modo che launcher, installer e Python package restino sempre allineati.

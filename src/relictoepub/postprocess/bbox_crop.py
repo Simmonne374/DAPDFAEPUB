@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from PIL import Image
 
@@ -56,7 +56,7 @@ class BBox:
         return self.width * self.height
 
     @classmethod
-    def from_string(cls, raw: str) -> "BBox":
+    def from_string(cls, raw: str) -> BBox:
         """Parsa una stringa tipo "<|det|>label [x1, y1, x2, y2]<|/det|>" o "<|bbox|...>"."""
         match = re.search(
             r"<\|det\|>([^\[]+)\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]<\|/det\|>",
@@ -103,8 +103,8 @@ def denormalize_bbox(
     img_w, img_h = image_size
 
     scale = target_size / max(img_w, img_h)
-    new_w = max(1, int(round(img_w * scale)))
-    new_h = max(1, int(round(img_h * scale)))
+    new_w = max(1, round(img_w * scale))
+    new_h = max(1, round(img_h * scale))
 
     paste_x = (target_size - new_w) / 2.0
     paste_y = (target_size - new_h) / 2.0
@@ -121,10 +121,10 @@ def denormalize_bbox(
     x_max_mapped = (x_max_1024 - paste_x) / scale
     y_max_mapped = (y_max_1024 - paste_y) / scale
 
-    left = int(round(x_min_mapped))
-    upper = int(round(y_min_mapped))
-    right = int(round(x_max_mapped))
-    lower = int(round(y_max_mapped))
+    left = round(x_min_mapped)
+    upper = round(y_min_mapped)
+    right = round(x_max_mapped)
+    lower = round(y_max_mapped)
 
     # Clipping difensivo per evitare crop fuori immagine
     left = max(0, min(img_w - 1, left))
@@ -254,10 +254,10 @@ def crop_batch_from_pages(
 
 
 __all__ = [
-    "BBox",
     "DEFAULT_NORMALIZE_RANGE",
-    "crop_image_from_bbox",
+    "BBox",
     "crop_batch_from_pages",
+    "crop_image_from_bbox",
     "denormalize_bbox",
     "extract_bbox_tokens",
 ]

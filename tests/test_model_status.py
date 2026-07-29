@@ -98,10 +98,11 @@ def test_download_model_ui_failure():
 def test_download_model_ui_no_hub_dependency():
     """Verifica il ramo di errore se huggingface_hub non è importabile."""
     import builtins
-    from relictoepub.ui.gradio_app import _download_model_ui
 
     # Rimuoviamo temporaneamente huggingface_hub dal sys.modules.
     import sys
+
+    from relictoepub.ui.gradio_app import _download_model_ui
     saved = sys.modules.pop("huggingface_hub", None)
     real_import = builtins.__import__
 
@@ -128,6 +129,7 @@ def test_download_model_ui_no_hub_dependency():
 
 def test_run_pipeline_yields_four_values():
     from unittest.mock import MagicMock
+
     from relictoepub.ui.gradio_app import _run_pipeline
     
     with patch("relictoepub.ui.gradio_app.Pipeline") as mock_pipeline_cls:

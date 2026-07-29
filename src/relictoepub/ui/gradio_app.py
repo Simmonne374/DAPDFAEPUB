@@ -43,7 +43,7 @@ def _toggle_run_button(pdf_path: str | None) -> dict:
 def _format_event(event: ProgressEvent) -> str:
     bar = ""
     if event.total:
-        filled = int(round(event.percent / 5))
+        filled = round(event.percent / 5)
         bar = f" [{('█' * filled):<20s}] {event.percent:5.1f}%"
     return f"[{event.phase.upper():<10s}]{bar} {event.message}"
 
@@ -94,7 +94,7 @@ def _run_pipeline(
         try:
             import torch
             cuda_ok = torch.cuda.is_available()
-        except Exception:
+        except ImportError:
             cuda_ok = False
         if not cuda_ok:
             base_log_text = (
@@ -147,14 +147,14 @@ def _run_pipeline(
                 final_dest_epub = output_dir_path / pdf_path_obj.with_suffix(".epub").name
                 shutil.copy(temp_output_epub, final_dest_epub)
                 final_dest_str = f"\n📁 Copiato nella cartella di destinazione: {final_dest_epub}"
-            except Exception as e:
+            except (OSError, shutil.SameFileError) as e:
                 final_dest_str = f"\n⚠️ Impossibile copiare nella cartella di destinazione: {e}"
         else:
             try:
                 final_dest_epub = pdf_path_obj.with_suffix(".epub")
                 shutil.copy(temp_output_epub, final_dest_epub)
                 final_dest_str = f"\n📁 Salvato in: {final_dest_epub}"
-            except Exception as e:
+            except (OSError, shutil.SameFileError) as e:
                 final_dest_str = f"\n⚠️ Impossibile salvare nella cartella del PDF: {e}"
 
         # Evento finale: aggiungi riepilogo e abilita il download
@@ -165,7 +165,7 @@ def _run_pipeline(
         )
         base_log_text = (base_log_text + summary).strip()
         yield base_log_text, gallery, str(temp_output_epub), check_model_status()[1]
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError, ImportError, TimeoutError) as exc:
         err = f"\n❌ Errore: {exc}\n{traceback.format_exc()}"
         base_log_text = (base_log_text + err).strip()
         yield base_log_text, gallery, None, gr.update()
@@ -198,7 +198,7 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
             ],
             tqdm_class=None,  # gradio traccia già la tqdm di default
         )
-    except Exception as exc:  # noqa: BLE001
+    except (RuntimeError, ValueError, OSError, TimeoutError, ConnectionError) as exc:
         log_text += f"\n\n❌ Download fallito: {exc}"
         yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True), gr.update(visible=True, label="Riprova download")
         return

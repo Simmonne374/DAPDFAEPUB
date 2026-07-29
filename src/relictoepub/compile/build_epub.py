@@ -22,9 +22,9 @@ import shutil
 import tempfile
 import uuid
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
 
 from relictoepub.compile.eink_css import EINK_CSS
 
@@ -202,7 +202,7 @@ def _check_pandoc() -> str:
     try:
         import pypandoc
         return pypandoc.get_pandoc_path()
-    except Exception:
+    except (ImportError, OSError):
         pass
     pandoc = shutil.which("pandoc")
     if pandoc is None:
@@ -414,7 +414,7 @@ def build_epub(
             try:
                 from relictoepub.postprocess.webp_optim import optimize_for_eink
                 optimize_for_eink(cover_image, cover_dest)
-            except Exception:
+            except (ImportError, OSError, ValueError):
                 shutil.copy(cover_image, cover_dest)
 
         # Asset images (WebP ready)
