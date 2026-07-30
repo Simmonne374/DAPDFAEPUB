@@ -173,8 +173,8 @@ def _run_pipeline(
     except (RuntimeError, ValueError, OSError, ImportError, TimeoutError) as exc:
         err = f"\n❌ Errore: {exc}\n{traceback.format_exc()}"
         base_log_text = (base_log_text + err).strip()
-        gr.Error(f"Errore durante la conversione: {exc}")
         yield base_log_text, gallery, None, gr.update()
+        raise gr.Error(f"Errore durante la conversione: {exc}") from exc
 
 
 def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr.update]]:
@@ -191,9 +191,8 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
         from huggingface_hub import snapshot_download
     except ImportError:
         log_text += "\n\n❌ `huggingface_hub` non installato. Installazione automatica…"
-        gr.Error("huggingface_hub non installato.")
         yield log_text, "🔴 **Dipendenza mancante**", gr.Button(interactive=True), gr.update(label="Errore")
-        return
+        raise gr.Error("huggingface_hub non installato.")
 
     try:
         path = snapshot_download(
@@ -207,9 +206,8 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
         )
     except (RuntimeError, ValueError, OSError, TimeoutError, ConnectionError) as exc:
         log_text += f"\n\n❌ Download fallito: {exc}"
-        gr.Error(f"Download modello fallito: {exc}")
         yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True), gr.update(visible=True, label="Riprova download")
-        return
+        raise gr.Error(f"Download modello fallito: {exc}") from exc
 
     log_text += f"\n\n✅ Modello scaricato in cache HuggingFace.\nPath: {path}"
     _, status_str = check_model_status()
