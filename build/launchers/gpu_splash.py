@@ -14,17 +14,15 @@ Lo splash NON blocca la UI principale: alla terminazione del bootstrap (state
 
 from __future__ import annotations
 
-import os
 import sys
 import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
-from typing import Any
 
 THIS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(THIS_DIR))
-from progress_state import ProgressState  # type: ignore  # noqa: E402
+from progress_state import ProgressState  # type: ignore
 
 
 def _human_bytes(n: float) -> str:

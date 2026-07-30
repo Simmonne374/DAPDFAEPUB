@@ -67,11 +67,13 @@ def _run_pipeline(
     gallery: list = []
 
     if pdf_path is None:
+        gr.Warning("Nessun PDF selezionato.")
         yield "❌ Nessun PDF selezionato.", gallery, None, gr.update()
         return
 
     pdf_path_obj = Path(pdf_path)
     if not pdf_path_obj.is_file():
+        gr.Warning("File non valido.")
         yield f"❌ File non valido: {pdf_path}", gallery, None, gr.update()
         return
 
@@ -148,6 +150,7 @@ def _run_pipeline(
                 shutil.copy(temp_output_epub, final_dest_epub)
                 final_dest_str = f"\n📁 Copiato nella cartella di destinazione: {final_dest_epub}"
             except (OSError, shutil.SameFileError) as e:
+                gr.Warning(f"Impossibile copiare nella cartella di destinazione: {e}")
                 final_dest_str = f"\n⚠️ Impossibile copiare nella cartella di destinazione: {e}"
         else:
             try:
@@ -155,6 +158,7 @@ def _run_pipeline(
                 shutil.copy(temp_output_epub, final_dest_epub)
                 final_dest_str = f"\n📁 Salvato in: {final_dest_epub}"
             except (OSError, shutil.SameFileError) as e:
+                gr.Warning(f"Impossibile salvare nella cartella del PDF: {e}")
                 final_dest_str = f"\n⚠️ Impossibile salvare nella cartella del PDF: {e}"
 
         # Evento finale: aggiungi riepilogo e abilita il download
@@ -164,10 +168,12 @@ def _run_pipeline(
             f"\n📁 Dimensione: {temp_output_epub.stat().st_size / 1024:.1f} KB"
         )
         base_log_text = (base_log_text + summary).strip()
+        gr.Info("Conversione EPUB completata con successo!")
         yield base_log_text, gallery, str(temp_output_epub), check_model_status()[1]
     except (RuntimeError, ValueError, OSError, ImportError, TimeoutError) as exc:
         err = f"\n❌ Errore: {exc}\n{traceback.format_exc()}"
         base_log_text = (base_log_text + err).strip()
+        gr.Error(f"Errore durante la conversione: {exc}")
         yield base_log_text, gallery, None, gr.update()
 
 
@@ -185,6 +191,7 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
         from huggingface_hub import snapshot_download
     except ImportError:
         log_text += "\n\n❌ `huggingface_hub` non installato. Installazione automatica…"
+        gr.Error("huggingface_hub non installato.")
         yield log_text, "🔴 **Dipendenza mancante**", gr.Button(interactive=True), gr.update(label="Errore")
         return
 
@@ -200,11 +207,13 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
         )
     except (RuntimeError, ValueError, OSError, TimeoutError, ConnectionError) as exc:
         log_text += f"\n\n❌ Download fallito: {exc}"
+        gr.Error(f"Download modello fallito: {exc}")
         yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True), gr.update(visible=True, label="Riprova download")
         return
 
     log_text += f"\n\n✅ Modello scaricato in cache HuggingFace.\nPath: {path}"
     _, status_str = check_model_status()
+    gr.Info("Modello scaricato con successo!")
     yield log_text, status_str, gr.Button(interactive=True), gr.update(visible=True, label="Modello scaricato", value=1.0)
 
 

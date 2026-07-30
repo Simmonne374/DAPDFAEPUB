@@ -22,9 +22,9 @@ SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))  # così `import relictoepub.*` funziona
 sys.path.insert(0, str(PROJECT_ROOT))  # fallback per compatibilità
 
-from relictoepub.compile.build_epub import BookMetadata  # noqa: E402
-from relictoepub.inference.config import InferenceConfig, QuantizationMode  # noqa: E402
-from relictoepub.pipeline import (  # noqa: E402
+from relictoepub.compile.build_epub import BookMetadata
+from relictoepub.inference.config import InferenceConfig, QuantizationMode
+from relictoepub.pipeline import (
     ModelNotFoundError,
     Pipeline,
     ProgressEvent,
@@ -55,12 +55,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Codice lingua ISO 639-1 (default: it)")
     parser.add_argument("--no-eink-optim", action="store_true",
                         help="Disabilita l'ottimizzazione WebP/E-ink")
-        parser.add_argument("--chapter-pages", type=int, default=None,
+    parser.add_argument("--chapter-pages", type=int, default=None,
                             help="Se il libro non ha struttura a heading (H1/H2), "
                                  "raggruppa le pagine in capitoli di N pagine.")
-        parser.add_argument("--verbose", "-v", action="store_true",
+    parser.add_argument("--verbose", "-v", action="store_true",
                             help="Log dettagliato (DEBUG)")
-        return parser.parse_args(argv)
+    return parser.parse_args(argv)
 
 
 def _event_printer() -> callable:
@@ -98,10 +98,10 @@ def main(argv: list[str] | None = None) -> int:
     # In caso contrario, evita un crash tardivo e mostra istruzioni chiare.
     if not check_model_available():
         print("⚠️  Modello 'baidu/Unlimited-OCR' non trovato nella cache HuggingFace.", file=sys.stderr)
-        print("", file=sys.stderr)
+        print(file=sys.stderr)
         print("Per scaricarlo (~6 GB), esegui:", file=sys.stderr)
         print("    python scripts/download_model.py", file=sys.stderr)
-        print("", file=sys.stderr)
+        print(file=sys.stderr)
         print("Oppure aprì la UI Gradio e usa il pulsante 'Scarica modello'.", file=sys.stderr)
         return 3
 
@@ -122,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         max_pages_per_batch=args.pages_per_batch,
         eink_optimize=not args.no_eink_optim,
         metadata=metadata,
-            chapter_pages=args.chapter_pages,
+        chapter_pages=args.chapter_pages,
         )
     try:
         result = pipeline.run(args.input, output_epub, progress_callback=_event_printer())

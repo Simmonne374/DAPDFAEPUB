@@ -28,7 +28,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_PATH = (
     Path(os.environ.get("TEMP", tempfile.gettempdir()))
     / "RelicToEpubBoot"
@@ -136,4 +135,4 @@ def _empty_state() -> dict[str, Any]:
     }
 
 
-__all__ = ["ProgressState", "DEFAULT_PATH"]
+__all__ = ["DEFAULT_PATH", "ProgressState"]

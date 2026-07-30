@@ -17,7 +17,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))  # così `import relictoepub.*` funziona
 sys.path.insert(0, str(PROJECT_ROOT))  # fallback per compatibilità
 
-from relictoepub.ui.gradio_app import build_demo  # noqa: E402
+from relictoepub.ui.gradio_app import build_demo
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

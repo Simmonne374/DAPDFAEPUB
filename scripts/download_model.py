@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from relictoepub.inference.config import InferenceConfig  # noqa: E402
+from relictoepub.inference.config import InferenceConfig
 
 
 def main() -> int:

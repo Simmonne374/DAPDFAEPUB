@@ -21,12 +21,10 @@ mostri sempre cosa sta succedendo (mai "sospeso" >2 s).
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 # Quando questo script è bundlato da PyInstaller, le dipendenze di launcher
 # (tkinter non serve qui) sono già disponibili via sys.path.
@@ -71,7 +69,7 @@ TORCH_VERSION_DEFAULT = "2.4.0"
 # ============================================================
 
 
-def parse_compute_cap(text: str) -> Optional[tuple[int, int]]:
+def parse_compute_cap(text: str) -> tuple[int, int] | None:
     """Parse ``nvidia-smi --query-gpu=compute_cap`` (es. "8.6") → (8, 6)."""
     try:
         major, minor = text.strip().split(".")
@@ -80,7 +78,7 @@ def parse_compute_cap(text: str) -> Optional[tuple[int, int]]:
         return None
 
 
-def get_gpu_info_via_smi() -> Optional[dict]:
+def get_gpu_info_via_smi() -> dict | None:
     """Ritorna info GPU via ``nvidia-smi`` + ``pynvml``, o ``None`` se non disponibile."""
     info: dict = {}
 
@@ -100,7 +98,6 @@ def get_gpu_info_via_smi() -> Optional[dict]:
                 info["compute_cap"] = parse_compute_cap(first[1])
                 info["driver_version"] = first[2].strip()
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
 
     # 2) pynvml / nvidia-ml-py per arricchire (cuDNN, memorie, ecc.)
         try:
@@ -400,10 +397,10 @@ def install_wheel_inline(wheel_path: Path, state: ProgressState) -> bool:
 
 
 # Cache del path dell'app exe, impostato in main()
-_app_exe_path: Optional[Path] = None
+_app_exe_path: Path | None = None
 
 
-def _get_app_exe_path() -> Optional[Path]:
+def _get_app_exe_path() -> Path | None:
     return _app_exe_path
 
 
@@ -483,7 +480,7 @@ def _check_install_path(app_exe: Path) -> None:
 
     # Warning se il path diverge dalla chiave di registro di disinstallazione
     try:
-        import winreg  # type: ignore  # noqa: F401
+        import winreg  # type: ignore
         # Apriamo HKLM\...\Uninstall\{AppId}_is1 / InstallLocation
         appid_guid = "{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}"
         reg_paths = [
@@ -536,13 +533,13 @@ def _wheel_cache_dir() -> Path:
     return p
 
 
-def find_cached_wheel(tag: str) -> Optional[Path]:
+def find_cached_wheel(tag: str) -> Path | None:
     cache = _wheel_cache_dir()
     matches = sorted(cache.glob(f"torch-*-{tag}-*.whl"))
     return matches[0] if matches else None
 
 
-def download_wheel_for(tag: str, state: ProgressState) -> Optional[Path]:
+def download_wheel_for(tag: str, state: ProgressState) -> Path | None:
     """Scarica il wheel torch per il tag (``cu118``, ``cu124``, ``cu126``, ``cpu``).
 
     Per ``cpu`` usa l'index ``pytorch.org/whl/cpu``; per i CUDA tag usa
