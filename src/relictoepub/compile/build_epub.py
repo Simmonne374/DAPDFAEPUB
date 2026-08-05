@@ -230,9 +230,12 @@ def _convert_markdown_to_xhtml(markdown: str) -> str:
     # NOTA: NON usare --standalone perché produce <!DOCTYPE html>...<html>...
     # che anniderebbe un documento dentro ogni capitolo XHTML, rendendo
     # l'EPUB invalido secondo EPUB3. Usiamo solo frammenti di body.
+    # Ensure pypandoc invokes the workflow-installed pandoc binary (CI sets /usr/local/bin/pandoc).
+    # Some pypandoc versions ignore PYPANDOC_PANDOC_PATH in the environment; pass explicit path.
     return pypandoc.convert_text(
         markdown, to="html5", format="markdown+smart",
         extra_args=["--syntax-highlighting=none", "--wrap=none"],
+        pandoc_path=_check_pandoc(),
     )
 
 
