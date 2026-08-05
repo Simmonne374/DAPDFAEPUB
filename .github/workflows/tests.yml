@@ -86,7 +86,15 @@ jobs:
               sudo apt-get install -y /tmp/pandoc.deb
               rm -f /tmp/pandoc.deb
             fi
+            # Force the freshly-installed binary into a path that wins over
+            # any system-bundled pandoc. Some shell environments on the
+            # ubuntu runner do not include /usr/bin (where dpkg installs the
+            # binary) in their PATH search order, so pypandoc ended up
+            # calling an older pandoc. /usr/local/bin is always searched.
+            sudo ln -sf /usr/bin/pandoc /usr/local/bin/pandoc
+            hash -r
           fi
+          echo "pandoc path: $(command -v pandoc)"
           pandoc --version | head -n1
 
       - name: Ruff lint
@@ -97,6 +105,9 @@ jobs:
       - name: Pytest
         shell: pwsh
         run: |
+          # Diagnostic: make sure pytest sees the same pandoc we just installed.
+          Get-Command pandoc -ErrorAction SilentlyContinue | Format-List
+          pandoc --version | Select-Object -First 1
           # -q for compact output; existing tests are model-free thanks to
           # the FakeOCRRunner monkeypatch in tests/test_pipeline.py.
           pytest -q
