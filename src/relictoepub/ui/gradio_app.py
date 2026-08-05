@@ -81,7 +81,7 @@ def _clear_checkpoint(pdf_path: str | None) -> str:
     return "🗑️ Checkpoint eliminato. La prossima conversione ripartirà da zero."
 
 
-def _request_stop(pipeline_state) -> tuple[str, "gr.update"]:
+def _request_stop(pipeline_state) -> tuple[str, gr.update]:
     """Gestisce il click sul bottone Stop. Chiama ``Pipeline.cancel()``
     in modo cooperativo (il batch in corso finirà, poi la pipeline emette
     :class:`PipelineCancelledError`). Restituisce ``(messaggio_log, btn_update)``.
@@ -93,8 +93,7 @@ def _request_stop(pipeline_state) -> tuple[str, "gr.update"]:
         return "⚠️ Cancellazione già richiesta.", gr.update(interactive=False)
     pipeline.cancel()
     return (
-        "⏹️ Cancellazione richiesta: il batch in corso finirà, poi la "
-        "pipeline si fermerà e salverà lo stato.",
+        "⏹️ Cancellazione richiesta: il batch in corso finirà, poi la pipeline si fermerà e salverà lo stato.",
         gr.update(value="⏳ Arresto…", interactive=False),
     )
 
@@ -118,7 +117,7 @@ def _run_pipeline(
     output_dir: str,
     resume_enabled: bool,
     pipeline_state,
-) -> Iterator[tuple[str, list, object, object, object, "gr.update", "gr.update"]]:
+) -> Iterator[tuple[str, list, object, object, object, gr.update, gr.update]]:
     """Wrapper Gradio di :meth:`Pipeline.run_iter`.
 
     Yields tuple ``(log_text, gallery_items, download_file, model_status,

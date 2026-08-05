@@ -29,9 +29,8 @@ from relictoepub.checkpoint import (
 )
 from relictoepub.compile.build_epub import BookMetadata
 from relictoepub.inference.config import InferenceConfig
-from relictoepub.pipeline import Pipeline
 from relictoepub.ingest import IngestResult, RenderedPage
-
+from relictoepub.pipeline import Pipeline
 
 # -------------------------------------------------------------------
 # 1) SHA256 deterministico
@@ -172,7 +171,6 @@ def test_atomic_write_preserves_prior_state_on_failure(
     assert store.load() == st1
 
     # Patch os.replace per simulare crash prima del rename
-    real_replace = __import__("os").replace
     boom_count = {"n": 0}
 
     def fake_replace(src, dst):
@@ -208,7 +206,7 @@ def test_concurrent_save_load_is_safe(tmp_path: Path) -> None:
             s = replace(base, completed_batches=list(range(i + 1)))
             for _ in range(5):
                 store.save(s)
-        except Exception as exc:  # pragma: no cover - error path
+        except OSError as exc:  # pragma: no cover - error path
             errors.append(exc)
 
     threads = [threading.Thread(target=writer, args=(i,)) for i in range(5)]

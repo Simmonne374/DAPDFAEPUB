@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import gradio as gr
+
 from relictoepub.ui.components import check_model_status
 
 
@@ -93,7 +95,7 @@ def test_download_model_ui_failure():
                 results.append(next(gen))
         except StopIteration:
             pass
-        except Exception:
+        except gr.Error:
             # The generator may raise gr.Error after yielding an error state; that's acceptable.
             pass
 
@@ -132,7 +134,7 @@ def test_download_model_ui_no_hub_dependency():
                 results.append(next(gen))
         except StopIteration:
             pass
-        except Exception:
+        except gr.Error:
             # generator may raise gr.Error after yielding error state
             pass
         # 1 yield iniziale + 1 yield d'errore.
