@@ -107,9 +107,11 @@ jobs:
         run: |
           # Diagnostic: make sure pytest sees the same pandoc we just installed.
           if ($env:RUNNER_OS -ne 'Windows') {
-            # Ensure pypandoc uses the /usr/local binary we installed from the deb.
-            # pypandoc 1.17 respects PYPANDOC_PANDOC_PATH.
-            $env:PYPANDOC_PANDOC_PATH = '/usr/local/bin/pandoc'
+            # Force pypandoc to use the /usr/local binary we just installed.
+            # pypandoc 1.17 reads PYPANDOC_PANDOC (NOT PYPANDOC_PANDOC_PATH):
+            # when set, it becomes the *only* path pypandoc will try. See
+            # pypandoc/__init__.py:_ensure_pandoc_path (~line 878).
+            $env:PYPANDOC_PANDOC = '/usr/local/bin/pandoc'
           }
           Get-Command pandoc -ErrorAction SilentlyContinue | Format-List
           pandoc --version | Select-Object -First 1
