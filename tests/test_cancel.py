@@ -16,13 +16,12 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 
 from relictoepub.checkpoint import (
     CheckpointStore,
-    new_checkpoint_state,
     resolve_checkpoint_dir,
 )
 from relictoepub.compile.build_epub import BookMetadata
@@ -31,7 +30,6 @@ from relictoepub.ingest import IngestResult, RenderedPage
 from relictoepub.pipeline import (
     Pipeline,
     PipelineCancelledError,
-    ProgressEvent,
 )
 
 

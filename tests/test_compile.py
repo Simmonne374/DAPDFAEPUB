@@ -239,7 +239,6 @@ def test_dcterms_modified_is_dynamic(tmp_path: Path) -> None:
     e (b) NON sia la stringa hardcoded ``2026-07-06`` che era il bug originale.
     """
     import re as _re
-    import time
 
     md = "# Cap\n\nTesto."
     out = tmp_path / "book.epub"
@@ -364,7 +363,6 @@ def test_pipeline_uses_hoisted_regex_patterns() -> None:
     assert hasattr(p, "_LAYOUT_TAG_RE"), "BUG B50: _LAYOUT_TAG_RE non hoistato"
     assert hasattr(p, "_EMPTY_LAYOUT_RE"), "BUG B51: _EMPTY_LAYOUT_RE non hoistato"
     # Verifica che siano pattern compilati, non stringhe
-    import re
     assert isinstance(p._DET_PATTERN, re.Pattern)
     assert isinstance(p._LAYOUT_TAG_RE, re.Pattern)
     assert isinstance(p._EMPTY_LAYOUT_RE, re.Pattern)

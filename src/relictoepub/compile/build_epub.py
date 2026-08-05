@@ -344,54 +344,6 @@ def _build_navigation_xhtml(title: str, chapters: list[ChapterInfo]) -> str:
 </html>"""
 
 
-def build_epub(
-    markdown: str,
-    images: Sequence[str | Path] = (),
-    metadata: BookMetadata | None = None,
-    output_path: str | Path = "output.epub",
-    *,
-    cover_image: Path | None = None,
-) -> Path:
-    """Compila un EPUB3 a partire da Markdown, immagini e metadati.
-
-    Args:
-        markdown: Testo Markdown completo del libro (anche più capitoli).
-        images: Lista di crop immagini da includere (``relictoepub.postprocess``).
-        metadata: Titolo, autore, lingua, identifier. Se ``None``, verranno
-            usati dei default sensati.
-        output_path: Dove salvare l'.epub finale.
-        cover_image: Path opzionale a una cover image (PNG/WebP/JPEG).
-
-    Returns:
-        Il :class:`Path` al file ``.epub`` creato.
-
-    Raises:
-        RuntimeError: se pandoc non è installato o le dipendenze mancano.
-    """
-    metadata = metadata or BookMetadata(title="Untitled")
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # 1) Split in capitoli (strategia adattiva, vedi _split_into_chapters)
-    chapters_raw = _split_into_chapters(
-        markdown, chapter_pages=metadata.chapter_pages
-    )
-    # Fallback B40: markdown vuoto o splitter non produce capitoli → almeno 1 capitolo
-    if not chapters_raw:
-        chapters = [
-            ChapterInfo(
-                title="Empty",
-                level=1,
-                filename="chap_0001.xhtml",
-                xhtml=_chapter_xhtml("", "(contenuto vuoto)", 1),
-            )
-        ]
-    else:
-        chapters = [
-            _build_chapter(i, raw) for i, raw in enumerate(chapters_raw)
-        ]
-
-
 def _build_chapter(index: int, raw: dict) -> ChapterInfo:
     """Helper: costruisce un singolo ChapterInfo da un dict splitter output."""
     body = raw.get("body", "")
