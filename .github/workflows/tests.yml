@@ -63,23 +63,31 @@ jobs:
           python -m pip install -e ".[dev,cpu]"
 
       - name: Ensure pandoc is installed on the runner
-        shell: pwsh
+        shell: bash
         run: |
-          if ($env:RUNNER_OS -eq 'Windows') {
-            Write-Host "Installing pandoc on Windows via chocolatey"
-            choco install pandoc -y --no-progress
-          } else {
-            Write-Host "Installing pandoc on Linux via apt"
-            sudo apt-get update -y
-            sudo apt-get install -y pandoc
-          }
-          # verify
-          $pandoc = (Get-Command pandoc -ErrorAction SilentlyContinue)
-          if (-not $pandoc) {
-            Write-Host "::warning::pandoc not installed; tests that need it may fail"
-          } else {
-            Write-Host "pandoc: $($pandoc.Path)"
-          }
+          set -euo pipefail
+          # The compile pipeline uses `pypandoc` with `--syntax-highlighting`,
+          # which is only available in pandoc >= 2.16. The `pandoc` package in
+          # Ubuntu 22.04 (default ubuntu-latest image) is older, so install
+          # the latest official release from GitHub instead. Windows runners
+          # ship with a recent pandoc (choco provides current), so we just
+          # ensure it is present there.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            if ! command -v pandoc >/dev/null 2>&1; then
+              choco install pandoc -y --no-progress
+            fi
+          else
+            PANDOC_VERSION="3.1.13"
+            if ! command -v pandoc >/dev/null 2>&1 || \
+               [ "$(pandoc --version | head -n1 | awk '{print $2}')" != "$PANDOC_VERSION" ]; then
+              echo "Installing pandoc $PANDOC_VERSION from GitHub releases"
+              curl -fsSL -o /tmp/pandoc.deb \
+                "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb"
+              sudo apt-get install -y /tmp/pandoc.deb
+              rm -f /tmp/pandoc.deb
+            fi
+          fi
+          pandoc --version | head -n1
 
       - name: Ruff lint
         shell: pwsh
