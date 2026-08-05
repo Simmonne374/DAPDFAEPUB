@@ -62,12 +62,21 @@ jobs:
           # The "pkg" extra is for the Windows installer workflow only.
           python -m pip install -e ".[dev,cpu]"
 
-      - name: Verify pandoc is available
+      - name: Ensure pandoc is installed on the runner
         shell: pwsh
         run: |
+          if ($env:RUNNER_OS -eq 'Windows') {
+            Write-Host "Installing pandoc on Windows via chocolatey"
+            choco install pandoc -y --no-progress
+          } else {
+            Write-Host "Installing pandoc on Linux via apt"
+            sudo apt-get update -y
+            sudo apt-get install -y pandoc
+          }
+          # verify
           $pandoc = (Get-Command pandoc -ErrorAction SilentlyContinue)
           if (-not $pandoc) {
-            Write-Host "::warning::pandoc not installed; tests that need it will be skipped"
+            Write-Host "::warning::pandoc not installed; tests that need it may fail"
           } else {
             Write-Host "pandoc: $($pandoc.Path)"
           }
