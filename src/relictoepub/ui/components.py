@@ -14,9 +14,17 @@ from __future__ import annotations
 import gradio as gr
 from huggingface_hub import try_to_load_from_cache
 
+# B47: choices di quantizzazione cachate a module load, così non vengono
+# ricalcolate ogni volta che `advanced_options()` viene chiamato (evita
+# di re-importare torch/bitsandbytes ad ogni render UI).
+_q_choices, _q_default = None, None
+
 
 def quantization_choices() -> tuple[list, str]:
     """Scelte Quantizzazione adattate all'ambiente (CUDA/CPU, bnb ok?)."""
+    global _q_choices, _q_default
+    if _q_choices is not None:
+        return _q_choices, _q_default
     choices = [
         ("4-bit (consigliato per GPU ≥8GB)", "int4"),
         ("8-bit (richiede ≥16GB VRAM)", "int8"),
@@ -34,8 +42,10 @@ def quantization_choices() -> tuple[list, str]:
     except ImportError:
         bnb_ok = False
     if not cuda_ok or not bnb_ok:
-        return [choices[2]], "none"
-    return choices, default
+        _q_choices, _q_default = [choices[2]], "none"
+    else:
+        _q_choices, _q_default = choices, default
+    return _q_choices, _q_default
 
 
 def check_model_status(model_id: str = "baidu/Unlimited-OCR") -> tuple[bool, str]:
@@ -106,8 +116,10 @@ def advanced_options() -> dict[str, gr.components.Component]:
             info="300 DPI è il sweet-spot qualità/performance",
         ),
         "quantization": gr.Dropdown(
-            choices=quantization_choices()[0],
-            value=quantization_choices()[1],
+            # B47: una sola chiamata a quantization_choices() (evita
+            # doppio import torch/bitsandbytes ad ogni render UI)
+            choices=_q_choices,
+            value=_q_default,
             label="Quantizzazione del modello",
         ),
         "eink_optimize": gr.Checkbox(
