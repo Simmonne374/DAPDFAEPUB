@@ -74,8 +74,9 @@ packages = ["src/relictoepub"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 markers = [
   "slow: marks tests as slow (require the Unlimited-OCR model)",
   "gpu: marks tests that require a CUDA-capable GPU",
+  "golden: marks tests that compare against committed EPUB golden files (run with --update-golden to regenerate)",
 ]

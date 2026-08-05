@@ -63,5 +63,8 @@ models/
 .cache/
 huggingface/
 
+# Pipeline checkpoints (auto-generated accanto a ogni PDF)
+.relictoepub_checkpoints/
+
 # OS
 Thumbs.db
