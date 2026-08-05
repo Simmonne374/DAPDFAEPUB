@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import threading
 import time
-from pathlib import Path
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -31,7 +31,6 @@ from relictoepub.pipeline import (
     Pipeline,
     PipelineCancelledError,
 )
-
 
 # -------------------------------------------------------------------
 # Test doubles

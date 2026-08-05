@@ -338,8 +338,9 @@ def test_ingest_render_pdf_closes_pil_handles(tmp_path: Path) -> None:
     Verifica statica: la funzione render_pdf deve contenere il pattern
     `with Image.open(hires_path)` (il vecchio codice era `pil_hires = Image.open(...)`).
     """
-    from relictoepub.ingest import render_pdf
     import inspect
+
+    from relictoepub.ingest import render_pdf
     source = inspect.getsource(render_pdf)
     assert "with Image.open(hires_path)" in source, (
         "BUG B31: render_pdf() non usa context manager per Image.open(). "

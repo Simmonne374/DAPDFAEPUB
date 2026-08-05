@@ -17,7 +17,6 @@ import pytest
 
 from relictoepub.pipeline import (
     Pipeline,
-    PipelineCancelledError,
 )
 
 

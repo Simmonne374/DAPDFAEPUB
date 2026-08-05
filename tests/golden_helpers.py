@@ -28,7 +28,6 @@ import pytest
 
 from relictoepub.compile.build_epub import BookMetadata, build_epub
 
-
 # Path assoluto della directory che contiene i golden file committati.
 GOLDEN_DIR: Path = Path(__file__).resolve().parent / "fixtures" / "golden"
 

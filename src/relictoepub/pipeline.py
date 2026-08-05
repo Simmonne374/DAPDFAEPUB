@@ -327,7 +327,7 @@ class Pipeline:
         if self.checkpoint_store is not None:
             existing = self.checkpoint_store.load()
             if existing is not None:
-                from relictoepub.checkpoint import compute_pdf_sha256  # noqa: F401
+                from relictoepub.checkpoint import compute_pdf_sha256
                 current_sha = compute_pdf_sha256(input_pdf)
                 if existing.source_pdf_sha256 != current_sha:
                     raise CheckpointMismatchError(
