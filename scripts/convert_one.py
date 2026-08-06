@@ -72,7 +72,7 @@ def _event_printer() -> callable:
         prefix = f"[{event.phase.upper():<10s}] t={elapsed:6.1f}s"
         bar = ""
         if event.total and event.percent:
-            filled = int(round(event.percent / 5))
+            filled = round(event.percent / 5)
             bar = f" [{('█' * filled):<20s}] {event.percent:5.1f}%"
         print(f"{prefix}{bar} {event.message}", flush=True)
         if event.phase == "error":

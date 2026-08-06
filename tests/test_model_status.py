@@ -80,6 +80,9 @@ def test_download_model_ui_success():
 
 def test_download_model_ui_failure():
     """Verifica il flusso di fallimento (eccezione di snapshot_download)."""
+    import gradio as gr
+    import pytest
+
     from relictoepub.ui.gradio_app import _download_model_ui
 
     with patch(
@@ -87,7 +90,10 @@ def test_download_model_ui_failure():
         side_effect=RuntimeError("network timeout"),
     ):
         generator = _download_model_ui()
-        results = list(generator)
+        results = []
+        with pytest.raises(gr.Error):
+            for res in generator:
+                results.append(res)
 
         # Deve esserci almeno il yield iniziale e quello d'errore.
         assert len(results) >= 2
@@ -118,7 +124,14 @@ def test_download_model_ui_no_hub_dependency():
     builtins.__import__ = fake_import
     try:
         generator = _download_model_ui()
-        results = list(generator)
+        results = []
+        import gradio as gr
+        import pytest
+
+        with pytest.raises(gr.Error):
+            for res in generator:
+                results.append(res)
+
         # 1 yield iniziale + 1 yield d'errore.
         assert len(results) == 2
         log_last, status_last, btn_last, _ = results[-1]

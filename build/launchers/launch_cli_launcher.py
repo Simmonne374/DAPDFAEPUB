@@ -115,7 +115,7 @@ def _self_check() -> bool:
 
 
 def main(argv: list[str]) -> int:
-    log_path = _setup_logging()
+    _setup_logging()
 
     if os.environ.get("RELICTOEPUB_BOOT_OK") not in (None, "1"):
         # In dev mode BOOT_OK puo essere assente; non blocchiamo
