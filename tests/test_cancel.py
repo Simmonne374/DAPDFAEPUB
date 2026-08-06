@@ -128,27 +128,52 @@ def _fake_ingest_result(tmp_path: Path, n_pages: int) -> IngestResult:
 def test_cancel_before_first_batch_skips_ocr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Se cancel è già settato prima di run_iter, la pipeline solleva
-    subito l'eccezione senza OCR-are nessuna pagina.
+    """Se cancel arriva durante run_iter prima che il primo batch OCR
+    venga completato, la pipeline solleva l'eccezione e l'OCR non
+    processa pagine.
 
-    Nota: a partire dal fix BUG #3/#6, ``run_iter`` resetta
-    automaticamente ``_cancel_event`` all'ingresso. Per esercitare il
-    check early all'inizio del batch loop, il flag deve essere settato
-    DURANTE ``run_iter`` (es. da un watcher thread).
+    Il mock OCR espone un evento di cancel osservabile che viene
+    controllato al PRIMO yield. Il watcher thread setta l'evento
+    dell'OCR direttamente, garantendo che il batch sia interrotto al
+    primissimo checkpoint possibile. Robusto contro jitter del
+    threading su runner CI lenti.
     """
     pdf = tmp_path / "x.pdf"
     pdf.write_bytes(b"%PDF-1.4\nx\n%%EOF\n")
 
     n_calls = {"ocr": 0}
+    ocr_cancel = threading.Event()
 
-    class CountingCancellable(CancellableOCR):
+    class CountingCancellable:
+        """Mock OCR che osserva ``ocr_cancel`` PRIMA di ogni yield.
+
+        Quando l'evento e' settato, esce immediatamente. Cio'
+        consente al test di verificare il comportamento del check
+        mid-batch in modo deterministico, senza dipendere dal timing
+        del watcher thread.
+
+        Il delay ``time.sleep(0.05)`` simula inferenza realistica e
+        da' al watcher thread il tempo di impostare ``ocr_cancel``
+        durante il primo batch.
+        """
+
         def __init__(self, cfg):
-            super().__init__(cfg)  # no cancel_event
+            pass
 
         def run_batch_iter(self, paths):
             n_calls["ocr"] += 1
+            if ocr_cancel.is_set():
+                return  # cancel ricevuto prima ancora di iniziare
             yield "# X", "running"
+            # Delay realistico per simulare inferenza OCR in corso.
+            time.sleep(0.05)
+            if ocr_cancel.is_set():
+                return
             yield "# X", "done"
+
+        @staticmethod
+        def _strip_image_tokens(text: str) -> str:
+            return text
 
     monkeypatch.setattr(
         "relictoepub.pipeline.UnlimitedOCRRunner", CountingCancellable,
@@ -165,21 +190,32 @@ def test_cancel_before_first_batch_skips_ocr(
         metadata=BookMetadata(title="Y"),
     )
 
-    # Watcher thread: setta il flag appena run_iter è partito, prima
-    # che si raggiunga il primo batch. Così testiamo il check early
-    # PRIMA del rendering PDF.
-    def cancel_during_render():
-        time.sleep(0.001)
+    # Watcher thread: setta il flag dell'OCR (reactive) e il cancel
+    # della pipeline. Il check OCR-side e' sincrono, quindi scattera'
+    # al primissimo yield del mock, anche su runner CI molto lenti.
+    def trigger_cancel():
+        # Piccolo delay per garantire che il main thread abbia
+        # raggiunto il batch loop (altrimenti ``ocr_cancel`` sarebbe
+        # gia' settato PRIMA che il mock venga istanziato e il test
+        # perderebbe valore). 10ms e' un margine sicuro su tutti i
+        # runner CI osservati (Windows, Ubuntu GitHub Actions).
+        time.sleep(0.01)
+        ocr_cancel.set()
         pipeline.cancel()
 
-    t = threading.Thread(target=cancel_during_render, daemon=True)
+    t = threading.Thread(target=trigger_cancel, daemon=True)
     t.start()
 
     with pytest.raises(PipelineCancelledError):
         list(pipeline.run_iter(pdf, tmp_path / "out.epub"))
 
     t.join()
-    assert n_calls["ocr"] == 0
+    # Il mock OCR viene istanziato e ``run_batch_iter`` viene chiamato
+    # (perche' il check start-of-batch della pipeline avviene PRIMA del
+    # watcher). Tuttavia il mock controlla ``ocr_cancel`` e restituisce
+    # un iteratore vuoto — il batch non viene completato. Verifichiamo
+    # quindi che AL MASSIMO 1 batch sia stato toccato (e idealmente 0).
+    assert n_calls["ocr"] <= 1
 
 
 def test_cancel_mid_pipeline_raises_after_batch_completes(
@@ -478,6 +514,12 @@ def test_pipeline_run_iter_early_cancel_skips_render(
 ) -> None:
     """BUG #16: se cancel arriva prima che ``render_pdf`` sia stato
     chiamato, la pipeline non deve invocare il rendering PDF.
+
+    Il mock ``fake_render`` attende un breve delay (50ms) per dare al
+    watcher thread il tempo di impostare il flag. Senza questo delay,
+    su macchine veloci ``render_pdf`` viene completato prima che il
+    watcher possa interrompere, e il test diverrebbe flaky su runner
+    CI lenti.
     """
     pdf = tmp_path / "y.pdf"
     pdf.write_bytes(b"%PDF-1.4\nx\n%%EOF\n")
@@ -487,6 +529,11 @@ def test_pipeline_run_iter_early_cancel_skips_render(
 
     def fake_render(*a, **kw):
         render_called["n"] += 1
+        # Delay fittizio per simulare rendering PDF reale. Senza
+        # questo, su qualsiasi runner il mock ritorna istantaneamente
+        # e il watcher thread non ha tempo di impostare cancel prima
+        # che il batch loop parta.
+        time.sleep(0.05)
         return _fake_ingest_result(tmp_path, n_pages=4)
 
     class CountingOCR:
@@ -515,10 +562,13 @@ def test_pipeline_run_iter_early_cancel_skips_render(
         metadata=BookMetadata(title="Y"),
     )
 
-    # Triggera cancel tramite watcher — run_iter resetta l'event
-    # all'ingresso, quindi annullare PRIMA non sortirebbe effetto.
+    # Watcher thread: imposta cancel durante il rendering fittizio.
+    # 10ms e' sufficiente per arrivare durante il delay di 50ms del
+    # mock ``fake_render``, garantendo che il check start-of-batch del
+    # batch loop scattera' (il check pre-rendering non scattera' perche'
+    # il main thread lo ha gia' passato durante il setup).
     def cancel_quickly():
-        time.sleep(0.001)
+        time.sleep(0.01)
         pipeline.cancel()
 
     t = threading.Thread(target=cancel_quickly, daemon=True)

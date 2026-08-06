@@ -83,7 +83,17 @@ def _normalize_xml(s: str) -> str:
 
 
 def _zip_normalize(epub_path: Path) -> dict[str, bytes]:
-    """Legge tutti i file dello ZIP, normalizzando l'XHTML."""
+    """Legge tutti i file dello ZIP, normalizzando l'XHTML e i CSS.
+
+    * I file XHTML/OPF/NAV passano per :func:`_normalize_xml` (rimozione
+      timestamp, UUID, normalizzazione whitespace).
+    * I file CSS passano solo per :func:`_normalize_eol` per evitare
+      mismatch di line endings tra golden (generato su Windows, CRLF)
+      e runtime su Linux (LF). Il contenuto CSS vero e proprio non
+      viene alterato.
+    * Tutti gli altri file (immagini, mimetype, font) sono confrontati
+      byte-per-byte.
+    """
     out: dict[str, bytes] = {}
     with zipfile.ZipFile(epub_path) as zf:
         for name in zf.namelist():
@@ -94,9 +104,24 @@ def _zip_normalize(epub_path: Path) -> dict[str, bytes]:
                     out[name] = _normalize_xml(txt).encode("utf-8")
                 except UnicodeDecodeError:
                     out[name] = data
+            elif name.endswith(".css"):
+                # Normalizza solo i line endings (CRLF/CR -> LF) perche
+                # il golden e stato generato su Windows (Path.write_text
+                # -> CRLF) mentre il runtime su Linux usa LF. Il contenuto
+                # CSS vero e proprio non viene modificato.
+                out[name] = _normalize_eol(data)
             else:
                 out[name] = data
     return out
+
+
+def _normalize_eol(data: bytes) -> bytes:
+    """Converte CRLF/CR in LF senza alterare il resto del contenuto.
+
+    Usata per file non-XML (es. CSS) dove ``_normalize_xml`` sarebbe troppo
+    aggressiva (schiaccerebbe i selettori multi-linea).
+    """
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
 def build_golden_epub(

@@ -36,10 +36,14 @@ def quantization_choices() -> tuple[list, str]:
         cuda_ok = torch.cuda.is_available()
     except ImportError:
         cuda_ok = False
+    # bitsandbytes puo sollevare RuntimeError (es. "0 active drivers"
+    # quando compilato senza GPU) invece di ImportError in ambienti
+    # parzialmente configurati (runner CI senza CUDA). Trattiamo ogni
+    # fallimento come "non disponibile" e ripieghiamo su CPU.
     try:
         import bitsandbytes  # noqa: F401
         bnb_ok = True
-    except ImportError:
+    except Exception:  # noqa: BLE001 - ImportError + RuntimeError da accelerate
         bnb_ok = False
     if not cuda_ok or not bnb_ok:
         _q_choices, _q_default = [choices[2]], "none"
