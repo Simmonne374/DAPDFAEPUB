@@ -92,8 +92,8 @@ def test_download_model_ui_failure():
         generator = _download_model_ui()
         results = []
         with pytest.raises(gr.Error):
-            for res in generator:
-                results.append(res)
+            while True:
+                results.append(next(generator))
 
         # Deve esserci almeno il yield iniziale e quello d'errore.
         assert len(results) >= 2
@@ -129,8 +129,8 @@ def test_download_model_ui_no_hub_dependency():
         import pytest
 
         with pytest.raises(gr.Error):
-            for res in generator:
-                results.append(res)
+            while True:
+                results.append(next(generator))
 
         # 1 yield iniziale + 1 yield d'errore.
         assert len(results) == 2
