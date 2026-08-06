@@ -470,7 +470,7 @@ def build_epub(
                 f'<item id="{Path(ch.filename).stem}" href="{ch.filename}" '
                 f'media-type="application/xhtml+xml"/>'
             )
-        for img_file in images_dir.iterdir():
+        for img_file in sorted(images_dir.iterdir(), key=lambda p: p.name):
             mt = "image/webp" if img_file.suffix == ".webp" else f"image/{img_file.suffix.lstrip('.')}"
             manifest_items.append(
                 f'<item id="{img_file.stem}" href="images/{img_file.name}" media-type="{mt}"/>'
