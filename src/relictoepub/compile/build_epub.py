@@ -232,7 +232,7 @@ def _convert_markdown_to_xhtml(markdown: str) -> str:
     # l'EPUB invalido secondo EPUB3. Usiamo solo frammenti di body.
     return pypandoc.convert_text(
         markdown, to="html5", format="markdown+smart",
-        extra_args=["--syntax-highlighting=none", "--wrap=none"],
+        extra_args=["--wrap=none"],
     )
 
 
