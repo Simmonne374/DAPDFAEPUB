@@ -22,11 +22,14 @@ SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))  # così `import relictoepub.*` funziona
 sys.path.insert(0, str(PROJECT_ROOT))  # fallback per compatibilità
 
+from relictoepub.checkpoint import CheckpointStore, resolve_checkpoint_dir
 from relictoepub.compile.build_epub import BookMetadata
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.pipeline import (
+    CheckpointMismatchError,
     ModelNotFoundError,
     Pipeline,
+    PipelineCancelledError,
     ProgressEvent,
     check_model_available,
 )
@@ -58,6 +61,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--chapter-pages", type=int, default=None,
                             help="Se il libro non ha struttura a heading (H1/H2), "
                                  "raggruppa le pagine in capitoli di N pagine.")
+    parser.add_argument("--resume", dest="resume", action="store_true",
+                            default=True,
+                            help="(default) Riprende da checkpoint se esistente "
+                                 "nella cartella <pdf_dir>/.relictoepub_checkpoints/.")
+    parser.add_argument("--no-resume", dest="resume", action="store_false",
+                            help="Disabilita il ripristino da checkpoint: "
+                                 "cancella lo stato esistente e riparte da zero.")
     parser.add_argument("--verbose", "-v", action="store_true",
                             help="Log dettagliato (DEBUG)")
     return parser.parse_args(argv)
@@ -116,6 +126,21 @@ def main(argv: list[str] | None = None) -> int:
         pages_per_batch=args.pages_per_batch,
     )
 
+    # Checkpoint: store persistente accanto al PDF sorgente.
+    cp_dir = resolve_checkpoint_dir(args.input)
+    checkpoint_store: CheckpointStore | None = None
+    if args.resume:
+        checkpoint_store = CheckpointStore(cp_dir)
+        if checkpoint_store.exists():
+            print(f"[checkpoint] Trovato: {checkpoint_store.path}", file=sys.stderr)
+    else:
+        # --no-resume: forza la pulizia se esiste uno stato precedente.
+        cp_dir_obj = cp_dir
+        if cp_dir_obj.is_dir():
+            import shutil
+            shutil.rmtree(cp_dir_obj, ignore_errors=True)
+            print("[checkpoint] Cancellato per --no-resume.", file=sys.stderr)
+
     pipeline = Pipeline(
         inference_config=config,
         dpi=args.dpi,
@@ -123,12 +148,49 @@ def main(argv: list[str] | None = None) -> int:
         eink_optimize=not args.no_eink_optim,
         metadata=metadata,
         chapter_pages=args.chapter_pages,
+        checkpoint_store=checkpoint_store,
         )
+
+    # SIGINT handler cooperativo: triggera cancel() invece di lasciar
+    # propagare KeyboardInterrupt. La pipeline termina pulita al prossimo
+    # checkpoint di batch, salvando lo stato. Senza questo, l'ultimo batch
+    # OCR completato andrebbe perso (BUG #19).
+    import signal
+    _sigint_handled = False
+
+    def _sigint_handler(signum, frame):  # noqa: ARG001
+        nonlocal _sigint_handled
+        if _sigint_handled:
+            # Secondo Ctrl+C → escalation, lascia propagare.
+            raise KeyboardInterrupt
+        _sigint_handled = True
+        print(
+            "\n[Ctrl+C] Cancellazione cooperativa in corso: la pipeline "
+            "finisce il batch corrente e salva lo stato...",
+            file=sys.stderr, flush=True,
+        )
+        pipeline.cancel()
+
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     try:
         result = pipeline.run(args.input, output_epub, progress_callback=_event_printer())
-    except KeyboardInterrupt:
-        print("\nInterrotto dall'utente.", file=sys.stderr)
+    except PipelineCancelledError:
+        # Cancel cooperativo: il checkpoint è già stato salvato dalla
+        # pipeline prima del raise.
+        print(
+            "\nInterrotto. Lo stato OCR è stato salvato: riprovare con --resume.",
+            file=sys.stderr,
+        )
         return 130
+    except KeyboardInterrupt:
+        # Secondo Ctrl+C o SIGINT prima del setup handler.
+        print("\nInterrotto forzatamente. Lo stato OCR potrebbe essere incompleto.",
+              file=sys.stderr)
+        return 130
+    except CheckpointMismatchError as exc:
+        print(f"⚠️  {exc}", file=sys.stderr)
+        return 4
     except ModelNotFoundError as exc:
         print(f"⚠️  {exc}", file=sys.stderr)
         return 3
