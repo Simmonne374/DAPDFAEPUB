@@ -1,7 +1,5 @@
 from unittest.mock import patch
 
-import gradio as gr
-
 from relictoepub.ui.components import check_model_status
 
 
