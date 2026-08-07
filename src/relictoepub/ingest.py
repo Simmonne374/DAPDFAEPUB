@@ -161,11 +161,11 @@ def render_pdf(
             hires_path = hires_dir / f"page_{page_num:04d}.png"
             pix.save(str(hires_path))
 
-            # 1024×1024 normalizzata
-            pil_hires = Image.open(hires_path)
-            pil_norm = _normalize_to_square(pil_hires, target_size)
-            norm_path = model_dir / f"page_{page_num:04d}.png"
-            pil_norm.save(norm_path, optimize=True)
+            # 1024×1024 normalizzata (B31: usa context manager per chiudere l'handler)
+            with Image.open(hires_path) as pil_hires:
+                pil_norm = _normalize_to_square(pil_hires, target_size)
+                norm_path = model_dir / f"page_{page_num:04d}.png"
+                pil_norm.save(norm_path, optimize=True)
 
             pages.append(
                 RenderedPage(

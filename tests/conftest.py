@@ -3,6 +3,9 @@
 Genera in modo deterministico:
 * Un PDF sintetico multi-pagina per i test di ingest/pipeline.
 * Un'immagine PNG di test per i test di bbox/webp.
+
+Aggiunge anche un flag CLI ``--update-golden`` che consente di
+rigenerare i golden file EPUB quando il comportamento inteso cambia.
 """
 
 from __future__ import annotations
@@ -20,6 +23,26 @@ if str(_SRC) not in sys.path:
 import pymupdf as fitz
 import pytest
 from PIL import Image, ImageDraw
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Aggiunge l'opzione ``--update-golden`` per rigenerare i golden EPUB."""
+    parser.addoption(
+        "--update-golden",
+        action="store_true",
+        default=False,
+        help=(
+            "Rigenera i golden file .epub in tests/fixtures/golden/ "
+            "sovrascrivendoli con l'output corrente. Usare quando una "
+            "modifica intenzionale al formato EPUB e stata approvata."
+        ),
+    )
+
+
+@pytest.fixture(scope="session")
+def update_golden_flag(request: pytest.FixtureRequest) -> bool:
+    """Espone il flag ``--update-golden`` ai test che ne hanno bisogno."""
+    return bool(request.config.getoption("--update-golden"))
 
 
 @pytest.fixture()
