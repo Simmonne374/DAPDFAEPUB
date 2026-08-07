@@ -42,7 +42,7 @@ def _human_speed(bps: float) -> str:
 def _format_eta(secs: float) -> str:
     if secs <= 0 or not _is_finite(secs):
         return "—"
-    secs = int(round(secs))
+    secs = round(secs)
     if secs < 60:
         return f"{secs}s"
     m, s = divmod(secs, 60)

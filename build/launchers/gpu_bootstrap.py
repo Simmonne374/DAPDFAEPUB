@@ -133,7 +133,7 @@ def select_wheel_for_gpu(compute_cap: tuple[int, int], driver_str: str) -> tuple
             selected = CUDA_WHEEL[candidates[0]]
         else:
             selected = ("cpu", "")
-    cuda_tag, min_driver = selected
+    cuda_tag, _min_driver = selected
 
     # Controlla versione driver
     try:
@@ -248,7 +248,6 @@ def download_with_progress(url: str, dest: Path, state: ProgressState, *, timeou
 
                 started = time.time()
                 last_chunk_time = time.time()
-                last_logged = downloaded
                 last_log_time = time.time()
 
                 with dest.open(mode) as f:
@@ -280,7 +279,6 @@ def download_with_progress(url: str, dest: Path, state: ProgressState, *, timeou
                                                 eta_seconds=eta,
                                             )
                                             last_log_time = now
-                                            last_logged = downloaded
 
                 # Download completato: scrivi stato finale
                 elapsed = max(0.001, time.time() - started)

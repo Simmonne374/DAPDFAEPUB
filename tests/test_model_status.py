@@ -1,7 +1,5 @@
 from unittest.mock import patch
 
-import gradio as gr
-
 from relictoepub.ui.components import check_model_status
 
 
@@ -82,22 +80,20 @@ def test_download_model_ui_success():
 
 def test_download_model_ui_failure():
     """Verifica il flusso di fallimento (eccezione di snapshot_download)."""
+    import gradio as gr
+    import pytest
+
     from relictoepub.ui.gradio_app import _download_model_ui
 
     with patch(
         "huggingface_hub.snapshot_download",
         side_effect=RuntimeError("network timeout"),
     ):
-        gen = _download_model_ui()
+        generator = _download_model_ui()
         results = []
-        try:
+        with pytest.raises(gr.Error):
             while True:
-                results.append(next(gen))
-        except StopIteration:
-            pass
-        except gr.Error:
-            # The generator may raise gr.Error after yielding an error state; that's acceptable.
-            pass
+                results.append(next(generator))
 
         # Deve esserci almeno il yield iniziale e quello d'errore.
         assert len(results) >= 2
@@ -127,16 +123,15 @@ def test_download_model_ui_no_hub_dependency():
 
     builtins.__import__ = fake_import
     try:
-        gen = _download_model_ui()
+        generator = _download_model_ui()
         results = []
-        try:
+        import gradio as gr
+        import pytest
+
+        with pytest.raises(gr.Error):
             while True:
-                results.append(next(gen))
-        except StopIteration:
-            pass
-        except gr.Error:
-            # generator may raise gr.Error after yielding error state
-            pass
+                results.append(next(generator))
+
         # 1 yield iniziale + 1 yield d'errore.
         assert len(results) >= 2
         log_last, status_last, btn_last, _ = results[-1]

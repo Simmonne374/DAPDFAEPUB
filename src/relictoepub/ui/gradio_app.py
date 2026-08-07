@@ -133,6 +133,7 @@ def _run_pipeline(
         yield "❌ Nessun PDF selezionato.", gallery, None, gr.update(), None, gr.update(), gr.update()
         return
 
+    gr.Info("Avvio conversione del PDF, attendere prego...")
     pdf_path_obj = Path(pdf_path)
     if not pdf_path_obj.is_file():
         gr.Warning("File non valido.")
@@ -311,6 +312,7 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
     """
     log_text = "🔄 Inizio download del modello 'baidu/Unlimited-OCR' (~6 GB)."
     log_text += "\n\nRestando in questa pagina vedrai i file scaricati uno per uno."
+    gr.Info("Avvio download del modello, potrebbe richiedere diversi minuti...")
     yield log_text, "⏳ **Download in corso...**", gr.Button(interactive=False), gr.update(visible=True, value=0, label="Download modello…")
 
     try:
