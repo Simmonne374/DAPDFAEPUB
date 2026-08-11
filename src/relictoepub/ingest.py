@@ -36,6 +36,10 @@ class RenderedPage:
         height_pt: Altezza della pagina in punti tipografici.
         original_path: PNG a 300 DPI (o comunque il dpi specificato).
         normalized_path: PNG 1024×1024 normalizzata per l'inferenza.
+        width_px: Larghezza dell'immagine ``original_path`` in pixel.
+            Default 0 per retro-compatibilità con costruttori vecchi.
+        height_px: Altezza dell'immagine ``original_path`` in pixel.
+            Default 0 per retro-compatibilità con costruttori vecchi.
     """
 
     page_num: int
@@ -43,6 +47,8 @@ class RenderedPage:
     height_pt: float
     original_path: Path
     normalized_path: Path
+    width_px: int = 0
+    height_px: int = 0
     extra_paths: list[Path] = field(default_factory=list)
 
 
@@ -172,10 +178,12 @@ def render_pdf(
                     page_num=page_num,
                     width_pt=width_pt,
                     height_pt=height_pt,
-                    original_path=hires_path,
-                    normalized_path=norm_path,
-                )
-            )
+                                width_px=pix.width,
+                                height_px=pix.height,
+                                original_path=hires_path,
+                                normalized_path=norm_path,
+                            )
+                        )
             logger.debug(
                 "Renderizzata pagina %d/%d: %dx%d pt → %s",
                 page_num, total, int(width_pt), int(height_pt), hires_path.name,

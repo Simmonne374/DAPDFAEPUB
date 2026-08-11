@@ -116,6 +116,9 @@ def _fake_ingest_result(tmp_path: Path, n_pages: int) -> IngestResult:
         pages.append(
             RenderedPage(
                 page_num=i, width_pt=100.0, height_pt=200.0,
+                # width_px/height_px usati dalla pipeline per calcolare la
+                # width% delle immagini (vedi fix issue #10).
+                width_px=2480, height_px=3508,
                 original_path=png, normalized_path=norm,
             )
         )

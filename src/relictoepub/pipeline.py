@@ -37,12 +37,36 @@ from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
 from relictoepub.ingest import render_pdf
 from relictoepub.postprocess.bbox_crop import (
     BBox,
-    crop_image_from_bbox,
+    crop_image_from_bbox_with_box,
 )
 from relictoepub.postprocess.text_clean import clean_text
 from relictoepub.postprocess.webp_optim import optimize_batch
 
 logger = logging.getLogger(__name__)
+
+
+def _build_figure(img_html: str, caption: str | None) -> str:
+    """Costruisce il markup ``<figure>`` XHTML con ``<figcaption>`` opzionale.
+
+    Issue #10: il modello Unlimited-OCR emette le caption come token separati
+    che vanno accoppiati all'immagine/figura/tabella che li precede.
+    Restituisce una stringa pronta da inserire nel markdown intermedio.
+    """
+    if caption:
+        # Escape di base per evitare di rompere il markup.
+        safe_caption = (
+            caption.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
+        return (
+            f'\n\n<figure style="margin:1em 0;text-align:center;">'
+            f'{img_html}'
+            f'<figcaption style="font-style:italic;color:#444;'
+            f'font-size:0.95em;margin-top:0.4em;">{safe_caption}</figcaption>'
+            f'</figure>\n\n'
+        )
+    return (
+        f'\n\n<figure style="margin:1em 0;text-align:center;">{img_html}</figure>\n\n'
+    )
 
 
 # B32/B50/B51: pattern regex hoisted a compile-time per evitare di
@@ -529,7 +553,13 @@ class Pipeline:
                 img_counter = 0
                 page_num = page.page_num  # bind for closure (B023)
                 page_path = page.original_path  # bind for closure (B023)
-                def replace_tag(match, _pn=page_num, _pp=page_path):
+                # Larghezza della pagina originale in pixel (300 DPI):
+                # usata per calcolare la width % corretta del bbox denormalizzato.
+                # Pre-popolata in ``RenderedPage`` (vedi ``ingest.py``) per non
+                # dover riaprire l'immagine ad ogni pagina (issue #10).
+                _page_w_px = page.width_px or 0
+
+                def replace_tag(match, _pn=page_num, _pp=page_path, _page_w_px=_page_w_px):
                     nonlocal img_counter
                     label = match.group(1).strip()
                     x1, y1, x2, y2 = (int(g) for g in match.groups()[1:5])
@@ -542,15 +572,29 @@ class Pipeline:
                         out_filename = f"page{_pn:04d}_{img_label}{ext}"
                         out_path = crops_dir / f"page{_pn:04d}_{img_label}.png"
 
-                        result_path = crop_image_from_bbox(
+                        crop_result = crop_image_from_bbox_with_box(
                             _pp, bbox, output_path=out_path, target_size=self.target_size
                         )
-                        if result_path and result_path.exists():
-                            saved_crops.append(result_path)
-                            # Calcola la larghezza percentuale relativa basata sulle coordinate originali
-                            width_pct = max(30.0, min(100.0, (x2 - x1) / 10.0))
-                            # Genera direttamente il tag img XHTML con stile inline per mantenere l'aspect ratio
-                            return f'\n\n<img src="images/{out_filename}" style="width:{width_pct:.1f}%;max-width:100%;height:auto;display:block;margin:1em auto;" />\n\n'
+                        if crop_result is None:
+                            return "\n\n"
+                        result_path, _pixel_box = crop_result
+                        if not result_path.exists():
+                            return "\n\n"
+                        saved_crops.append(result_path)
+                        # Larghezza % derivata dal bbox denormalizzato (in pixel
+                        # della pagina 300 DPI), non dalle coordinate [0,1000]
+                        # dell'immagine padded 1024: indipendente dall'aspect-
+                        # ratio della pagina.
+                        width_pct = bbox.width_pct_against(_page_w_px)
+                        # Clamp per evitare icone giganti o layout troppo stretti
+                        # (decisione utente: [25, 100]).
+                        width_pct = max(25.0, min(100.0, width_pct))
+                        img_html = (
+                            f'<img src="images/{out_filename}" '
+                            f'style="width:{width_pct:.1f}%;max-width:100%;'
+                            f'height:auto;display:block;margin:1em auto;" />'
+                        )
+                        return _build_figure(img_html, caption=None)
 
                     elif label == "title":
                         return "\n\n# "
@@ -561,7 +605,112 @@ class Pipeline:
 
                     return "\n\n"
 
-                page_markdown = _DET_PATTERN.sub(replace_tag, page_text)
+                # Trova tutti i <|det|>...<|/det|> in ordine di apparizione e
+                # processali sequenzialmente. Questo permette di accoppiare
+                # ``image_caption`` / ``figure_caption`` / ``table_caption``
+                # con l'immagine/figura/tabella che li precede immediatamente
+                # (modello Unlimited-OCR emette la caption come token separato
+                # subito dopo l'immagine -- issue #10).
+                det_matches = list(_DET_PATTERN.finditer(page_text))
+                pieces: list[str] = []
+                cursor = 0
+                # Mappa label immagine -> prefisso caption atteso.
+                caption_label_for = {
+                    "image": "image_caption",
+                    "figure": "figure_caption",
+                    "table": "table_caption",
+                }
+                last_was_image: str | None = None  # prefisso caption atteso
+                last_img_html: str | None = None   # <img> pendente da wrappare
+                for det_match in det_matches:
+                    # 1) Emetti il testo fino al match corrente (eventualmente
+                    #    include caption orfane che non avevano immagine prima).
+                    pieces.append(page_text[cursor:det_match.start()])
+                    cursor = det_match.end()
+
+                    m_label = det_match.group(1).strip()
+                    m_groups = det_match.groups()[1:5]
+
+                    if m_label in ("image", "figure", "table"):
+                        # C'e un'immagine pendente dalla quale non e arrivata
+                        # una caption? Flushiamola senza caption.
+                        if last_img_html is not None:
+                            pieces.append(_build_figure(last_img_html, caption=None))
+                            last_img_html = None
+                            last_was_image = None
+
+                        # Costruisci il tag <img> (stessa logica di replace_tag).
+                        x1, y1, x2, y2 = (int(g) for g in m_groups)
+                        bbox = BBox(
+                            x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=m_label,
+                        )
+                        img_label = f"{m_label}{img_counter}"
+                        img_counter += 1
+                        ext = ".webp" if self.eink_optimize else ".png"
+                        out_filename = f"page{page_num:04d}_{img_label}{ext}"
+                        out_path = crops_dir / f"page{page_num:04d}_{img_label}.png"
+                        crop_result = crop_image_from_bbox_with_box(
+                            page_path,
+                            bbox,
+                            output_path=out_path,
+                            target_size=self.target_size,
+                        )
+                        if crop_result is None:
+                            continue
+                        result_path, _pixel_box = crop_result
+                        if not result_path.exists():
+                            continue
+                        saved_crops.append(result_path)
+                        width_pct = bbox.width_pct_against(_page_w_px)
+                        width_pct = max(25.0, min(100.0, width_pct))
+                        last_img_html = (
+                            f'<img src="images/{out_filename}" '
+                            f'style="width:{width_pct:.1f}%;max-width:100%;'
+                            f'height:auto;display:block;margin:1em auto;" />'
+                        )
+                        last_was_image = caption_label_for[m_label]
+                        continue
+
+                    if (
+                        m_label in ("image_caption", "figure_caption", "table_caption")
+                        and last_was_image == m_label
+                        and last_img_html is not None
+                    ):
+                        # Estrai il testo della caption: tutto cio che segue
+                        # il tag fino al prossimo newline / prossimo <|det|>.
+                        tail = page_text[
+                            det_match.end():det_match.end() + 400
+                        ]
+                        cut = re.search(r"[\n]|<\|", tail)
+                        caption_text = (
+                            tail[: cut.start()] if cut else tail
+                        ).strip()
+                        caption_text = re.sub(
+                            r"<\|ref\|>.*?<\|/ref\|>", "", caption_text,
+                        ).strip()
+                        # Flush del <figure> con <figcaption>.
+                        pieces.append(
+                            _build_figure(last_img_html, caption=caption_text or None),
+                        )
+                        last_img_html = None
+                        last_was_image = None
+                        continue
+
+                    # Qualsiasi altro label (text, header, footer, page_number,
+                    # caption orfana, ...) -- flush di un eventuale <figure>
+                    # pendente e poi delega a ``replace_tag`` per il testo.
+                    if last_img_html is not None:
+                        pieces.append(_build_figure(last_img_html, caption=None))
+                        last_img_html = None
+                        last_was_image = None
+                    pieces.append(replace_tag(det_match))
+
+                # Flush finale di un <figure> pendente.
+                if last_img_html is not None:
+                    pieces.append(_build_figure(last_img_html, caption=None))
+                pieces.append(page_text[cursor:])
+
+                page_markdown = "".join(pieces)
                 page_markdown = self._runner._strip_image_tokens(page_markdown)
                 batch_markdown_parts.append(page_markdown)
 
@@ -635,7 +784,10 @@ class Pipeline:
                 "images_used_in_epub": len(final_images),
                 "dpi": self.dpi,
                 "quantization": self.inference_config.quantization.value,
-            },
+                            # Espone il markdown pulito per test introspezione
+                            # (issue #10: verifica emissione <figure>/<figcaption>).
+                            "cleaned_markdown": cleaned,
+                        },
         )
         yield ProgressEvent(
             phase="done",
