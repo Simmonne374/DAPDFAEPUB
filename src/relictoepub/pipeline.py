@@ -37,7 +37,6 @@ from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
 from relictoepub.ingest import render_pdf
 from relictoepub.postprocess.bbox_crop import (
     BBox,
-    crop_image_from_bbox,
     crop_image_from_bbox_with_box,
 )
 from relictoepub.postprocess.text_clean import clean_text
@@ -560,7 +559,7 @@ class Pipeline:
                 # dover riaprire l'immagine ad ogni pagina (issue #10).
                 _page_w_px = page.width_px or 0
 
-                def replace_tag(match, _pn=page_num, _pp=page_path):
+                def replace_tag(match, _pn=page_num, _pp=page_path, _page_w_px=_page_w_px):
                     nonlocal img_counter
                     label = match.group(1).strip()
                     x1, y1, x2, y2 = (int(g) for g in match.groups()[1:5])
