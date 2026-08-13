@@ -97,7 +97,8 @@ def destination_folder() -> gr.Textbox:
     """Campo di testo per la cartella di destinazione dell'EPUB."""
     return gr.Textbox(
         label="📁 Cartella di destinazione (opzionale)",
-        placeholder="Es: C:\\Libri - Lascia vuoto per salvare nella cartella del PDF",
+        placeholder="Es: C:\\Libri",
+        info="Lascia vuoto per salvare nella cartella del PDF",
         lines=1,
     )
 
