@@ -25,7 +25,6 @@ import time
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
-
 from relictoepub.inference.config import (
     InferenceConfig,
     OCRPageResult,
@@ -227,7 +226,7 @@ class UnlimitedOCRRunner:
                             output_path=temp_dir,
                         )
                     result_container["decoded"] = decoded
-                except Exception as exc:  # noqa: BLE001
+                except (RuntimeError, ValueError, OSError, TypeError, AttributeError, IndexError) as exc:
                     infer_exception["error"] = exc
 
         thread = threading.Thread(target=worker, daemon=True)

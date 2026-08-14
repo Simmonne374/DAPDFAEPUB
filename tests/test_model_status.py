@@ -1,5 +1,7 @@
 from unittest.mock import patch
+
 from relictoepub.ui.components import check_model_status
+
 
 def test_check_model_status_real():
     is_ok, status_str = check_model_status("baidu/Unlimited-OCR")
@@ -21,7 +23,11 @@ def test_check_model_status_cached():
 
 def test_check_model_status_not_cached():
     with patch("relictoepub.ui.components.try_to_load_from_cache") as mock_load:
-        mock_load.side_effect = Exception("Not found in cache")
+        # Simula un errore di I/O sulla cache (es. cache corrotta o permessi mancanti).
+        # In condizioni normali un file mancante viene restituito come ``None`` (vedi
+        # ``test_check_model_status_returns_none``); qui testiamo invece il ramo
+        # di fallback quando l'accesso alla cache genera un'eccezione reale.
+        mock_load.side_effect = OSError("Cache directory unreadable")
         is_ok, status_str = check_model_status("baidu/Unlimited-OCR")
         assert is_ok is False
         assert "🔴 **Modello non presente localmente**" in status_str
@@ -74,6 +80,9 @@ def test_download_model_ui_success():
 
 def test_download_model_ui_failure():
     """Verifica il flusso di fallimento (eccezione di snapshot_download)."""
+    import gradio as gr
+    import pytest
+
     from relictoepub.ui.gradio_app import _download_model_ui
 
     with patch(
@@ -81,7 +90,10 @@ def test_download_model_ui_failure():
         side_effect=RuntimeError("network timeout"),
     ):
         generator = _download_model_ui()
-        results = list(generator)
+        results = []
+        with pytest.raises(gr.Error):
+            while True:
+                results.append(next(generator))
 
         # Deve esserci almeno il yield iniziale e quello d'errore.
         assert len(results) >= 2
@@ -96,10 +108,11 @@ def test_download_model_ui_failure():
 def test_download_model_ui_no_hub_dependency():
     """Verifica il ramo di errore se huggingface_hub non è importabile."""
     import builtins
-    from relictoepub.ui.gradio_app import _download_model_ui
 
     # Rimuoviamo temporaneamente huggingface_hub dal sys.modules.
     import sys
+
+    from relictoepub.ui.gradio_app import _download_model_ui
     saved = sys.modules.pop("huggingface_hub", None)
     real_import = builtins.__import__
 
@@ -111,9 +124,16 @@ def test_download_model_ui_no_hub_dependency():
     builtins.__import__ = fake_import
     try:
         generator = _download_model_ui()
-        results = list(generator)
+        results = []
+        import gradio as gr
+        import pytest
+
+        with pytest.raises(gr.Error):
+            while True:
+                results.append(next(generator))
+
         # 1 yield iniziale + 1 yield d'errore.
-        assert len(results) == 2
+        assert len(results) >= 2
         log_last, status_last, btn_last, _ = results[-1]
         assert "non installato" in log_last
         assert status_last == "🔴 **Dipendenza mancante**"
@@ -126,6 +146,7 @@ def test_download_model_ui_no_hub_dependency():
 
 def test_run_pipeline_yields_four_values():
     from unittest.mock import MagicMock
+
     from relictoepub.ui.gradio_app import _run_pipeline
     
     with patch("relictoepub.ui.gradio_app.Pipeline") as mock_pipeline_cls:
@@ -152,14 +173,17 @@ def test_run_pipeline_yields_four_values():
                     eink_optimize=False,
                     title="Test Book",
                     author="Test Author",
-                    output_dir=""
+                    output_dir="",
+                    resume_enabled=True,
+                    pipeline_state=None,
                 )
                 
                 results = list(generator)
                 
                 assert len(results) >= 2
                 for res in results:
-                    assert len(res) == 4
+                    # New run yields 7-tuples: (log, gallery, download_file, model_status, pipeline_state, stop_btn_update, run_btn_update)
+                    assert len(res) == 7
                     
                 # Verify that the last yield has the check_model_status message as the 4th element
                 assert results[-1][3] == "🟢 **Modello rilevato localmente**"

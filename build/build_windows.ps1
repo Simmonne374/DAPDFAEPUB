@@ -16,6 +16,8 @@
 #  - PYTHON_BIN  : percorso esplicito di python.exe (default: py -3.11)
 #  - ISCC        : percorso esplicito di ISCC.exe
 #  - SKIP_INSTALLER : se "1", salta il passo Inno Setup (utile in CI)
+#  - MYAPP_VERSION : versione X.Y.Z passata a ISCC come /DMyAppVersion=X.Y.Z
+#                    (default: letto da pyproject.toml via helper Python)
 
 [CmdletBinding()]
 param(
@@ -139,7 +141,18 @@ if ($env:SKIP_INSTALLER -eq "1") {
         if (-not (Test-Path $issPath)) {
             Write-Host "installer.iss non trovato in $ScriptDir — step saltato." -ForegroundColor Yellow
         } else {
-            & $iscc $issPath
+            # Determina la versione: env var vince; altrimenti leggi
+            # pyproject.toml via uno script helper.
+            $myVer = $env:MYAPP_VERSION
+            if (-not $myVer) {
+                $helper = Join-Path $ScriptDir "scripts\get_version.py"
+                if (Test-Path $helper) {
+                    $myVer = (& $py $helper).Trim()
+                }
+            }
+            if (-not $myVer) { $myVer = "0.0.0+unknown" }
+            Write-Host "ISCC versione: $myVer" -ForegroundColor Cyan
+            & $iscc /DMyAppVersion=$myVer $issPath
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallito (exit $LASTEXITCODE)" }
         }
     }

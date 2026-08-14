@@ -17,25 +17,70 @@ Flusso:
 from __future__ import annotations
 
 import logging
-import time
 import re
-from collections.abc import Iterator
+import threading
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from relictoepub.checkpoint import (
+    CheckpointMismatchError,
+    CheckpointState,
+    CheckpointStore,
+    new_checkpoint_state,
+)
 from relictoepub.compile.build_epub import BookMetadata, build_epub
-from relictoepub.ingest import render_pdf
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
+from relictoepub.ingest import render_pdf
 from relictoepub.postprocess.bbox_crop import (
     BBox,
-    crop_image_from_bbox,
+    crop_image_from_bbox_with_box,
 )
 from relictoepub.postprocess.text_clean import clean_text
 from relictoepub.postprocess.webp_optim import optimize_batch
 
 logger = logging.getLogger(__name__)
+
+
+def _build_figure(img_html: str, caption: str | None) -> str:
+    """Costruisce il markup ``<figure>`` XHTML con ``<figcaption>`` opzionale.
+
+    Issue #10: il modello Unlimited-OCR emette le caption come token separati
+    che vanno accoppiati all'immagine/figura/tabella che li precede.
+    Restituisce una stringa pronta da inserire nel markdown intermedio.
+    """
+    if caption:
+        # Escape di base per evitare di rompere il markup.
+        safe_caption = (
+            caption.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        )
+        return (
+            f'\n\n<figure style="margin:1em 0;text-align:center;">'
+            f'{img_html}'
+            f'<figcaption style="font-style:italic;color:#444;'
+            f'font-size:0.95em;margin-top:0.4em;">{safe_caption}</figcaption>'
+            f'</figure>\n\n'
+        )
+    return (
+        f'\n\n<figure style="margin:1em 0;text-align:center;">{img_html}</figure>\n\n'
+    )
+
+
+# B32/B50/B51: pattern regex hoisted a compile-time per evitare di
+# ricompilare per ogni pagina (miglioramento performance significativo
+# su libri di centinaia di pagine).
+_DET_PATTERN = re.compile(
+    r"<\|det\|>([^\[]+)\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]<\|/det\|>"
+)
+_LAYOUT_TAG_RE = re.compile(
+    r"<\|det\|>(footer|page_number|header)\[[^\]]+\]<\|/det\|>([^\n<]+)"
+)
+_EMPTY_LAYOUT_RE = re.compile(
+    r"<\|det\|>(?:footer|page_number|header)\[[^\]]+\]<\|/det\|>"
+)
 
 
 @dataclass
@@ -80,6 +125,26 @@ class ModelNotFoundError(RuntimeError):
         )
 
 
+class PipelineCancelledError(RuntimeError):
+    """Eccezione tipizzata sollevata quando la pipeline viene cancellata
+    esternamente (tipicamente dal bottone "Stop" della UI Gradio).
+
+    Viene sollevata all'inizio del batch OCR successivo al flag di cancel.
+    I batch già completati (e quindi i loro checkpoint) sono preservati.
+
+    Attributes:
+        completed_batches: numero di batch completati prima della cancellazione.
+    """
+
+    def __init__(self, completed_batches: int = 0) -> None:
+        self.completed_batches = completed_batches
+        super().__init__(
+            f"Pipeline cancellata dopo {completed_batches} batch OCR completati. "
+            f"I batch completati sono stati salvati nel checkpoint; rilancia "
+            f"per riprendere."
+        )
+
+
 def check_model_available(model_id: str = "baidu/Unlimited-OCR") -> bool:
     """Controlla se il modello è presente nella cache di HuggingFace.
 
@@ -108,7 +173,7 @@ def check_model_available(model_id: str = "baidu/Unlimited-OCR") -> bool:
                 path_or_tuple = result if isinstance(result, tuple) else (result,)
                 if path_or_tuple and path_or_tuple[0] is not None:
                     return True
-    except Exception:
+    except (OSError, ValueError, TypeError, AttributeError):
         # Qualsiasi errore (modello non esistente, no internet, ecc.) → non disponibile
         return False
     return False
@@ -150,6 +215,7 @@ class Pipeline:
         metadata: BookMetadata | None = None,
             chapter_pages: int | None = None,
             work_dir: Path | None = None,
+            checkpoint_store: CheckpointStore | None = None,
         ) -> None:
         self.inference_config = inference_config or InferenceConfig(
             quantization=QuantizationMode.INT4
@@ -162,10 +228,47 @@ class Pipeline:
         )
         self.inference_config.pages_per_batch = self.max_pages_per_batch
         self.eink_optimize = eink_optimize
-        self.metadata = metadata
+        # Snapshot del metadata fornito al costruttore — non viene
+        # sovrascritto da :meth:`run_iter`. Se l'utente passa un
+        # ``BookMetadata``, lo rispettiamo; altrimenti ne creiamo uno
+        # basato sul nome PDF al PRIMO :meth:`run_iter` (BUG #5/#6).
+        self._initial_metadata = metadata
+        self.metadata = metadata  # sarà settato da run_iter se None
         self.chapter_pages = chapter_pages
         self.work_dir = work_dir
+        self.checkpoint_store = checkpoint_store
         self._runner: UnlimitedOCRRunner | None = None
+        # Cancel token per interruption cooperativa. Settato da
+        # :meth:`Pipeline.cancel` (chiamato dal bottone Stop di Gradio
+        # o da ``KeyboardInterrupt`` nella CLI). Controllato a inizio
+        # di ogni batch OCR → solleva :class:`PipelineCancelledError`.
+        self._cancel_event = threading.Event()
+
+    # ------------------------------------------------------------------
+    # Cancel API (UI "Stop" button)
+    # ------------------------------------------------------------------
+
+    def cancel(self) -> None:
+        """Richiede la cancellazione cooperativa della pipeline.
+
+        Effect: al prossimo checkpoint (inizio del batch OCR successivo)
+        verrà sollevata :class:`PipelineCancelledError`. Il batch in
+        corso non viene killato: completa normalmente e il suo stato
+        viene salvato su checkpoint (se abilitato).
+
+        Idempotente: chiamate multiple hanno lo stesso effetto.
+        """
+        if not self._cancel_event.is_set():
+            logger.info("Pipeline.cancel() invocato: cancel richiesto.")
+        self._cancel_event.set()
+
+    def is_cancelled(self) -> bool:
+        """True se :meth:`cancel` è stato chiamato."""
+        return self._cancel_event.is_set()
+
+    def reset_cancel(self) -> None:
+        """Resetta il cancel event per riusare la stessa istanza Pipeline."""
+        self._cancel_event.clear()
 
     # ------------------------------------------------------------------
     # Public API
@@ -209,7 +312,30 @@ class Pipeline:
         """
         input_pdf = Path(input_pdf)
         output_epub = Path(output_epub)
-        if self.metadata is None:
+        # Nota: NON resettiamo ``_cancel_event`` qui. L'utente che
+        # vuole riusare la stessa istanza ``Pipeline`` dopo una
+        # cancellazione deve chiamare esplicitamente
+        # :meth:`reset_cancel` (vedi ``test_pipeline_reset_cancel_allows_reuse``).
+        # Altrimenti il cancel flag resterebbe "appiccicoso" tra run.
+
+        # Cancel check pre-rendering (BUG #16): se l'utente ha già
+        # richiesto cancel prima ancora di iniziare (es. clicca Stop
+        # immediatamente dopo aver cliccato Converti), saltiamo il
+        # costoso rendering PDF.
+        if self._cancel_event.is_set():
+            yield ProgressEvent(
+                phase="cancelling",
+                message="⏹️ Cancellazione richiesta prima dell'avvio.",
+                extra={"cancelled": True, "completed_batches": 0},
+            )
+            raise PipelineCancelledError(completed_batches=0)
+
+        # Metadata: usa l'override fornito al costruttore oppure il
+        # default basato sul PDF. Non mutiamo ``_initial_metadata`` per
+        # consentire riuso dell'istanza su più file (BUG #5).
+        if self._initial_metadata is not None:
+            self.metadata = self._initial_metadata
+        elif self.metadata is None:
             self.metadata = BookMetadata(title=input_pdf.stem)
         # Se l'utente ha passato ``chapter_pages`` a ``Pipeline.__init__``
         # ma non ha fornito un ``BookMetadata`` proprio, applichiamo il
@@ -219,6 +345,43 @@ class Pipeline:
             self.metadata, chapter_pages=self.chapter_pages
             )
         start = time.perf_counter()
+
+        # Checkpoint: carica stato precedente se disponibile e valido.
+        checkpoint_state: CheckpointState | None = None
+        if self.checkpoint_store is not None:
+            existing = self.checkpoint_store.load()
+            if existing is not None:
+                from relictoepub.checkpoint import compute_pdf_sha256
+                current_sha = compute_pdf_sha256(input_pdf)
+                if existing.source_pdf_sha256 != current_sha:
+                    raise CheckpointMismatchError(
+                        f"Checkpoint presente ({self.checkpoint_store.path}) "
+                        f"appartiene a un PDF diverso (sha256 atteso: "
+                        f"{current_sha[:20]}…, trovato: "
+                        f"{existing.source_pdf_sha256[:20]}…). "
+                        f"Usa --no-resume per forzare la riesecuzione "
+                        f"oppure elimina {self.checkpoint_store.directory}."
+                    )
+                checkpoint_state = existing
+                logger.info(
+                    "Checkpoint caricato: %d/%d batch già completati",
+                    len(existing.completed_batches), existing.total_batches,
+                )
+                yield ProgressEvent(
+                    phase="ocr",
+                    message=(
+                        f"Ripresa da checkpoint: "
+                        f"{len(existing.completed_batches)}/"
+                        f"{existing.total_batches} batch già OCR-ati"
+                    ),
+                    current=len(existing.completed_batches),
+                    total=existing.total_batches,
+                    percent=(
+                        len(existing.completed_batches)
+                        / max(1, existing.total_batches)
+                    ) * 100.0,
+                    extra={"resuming": True},
+                )
 
         # 1) Ingest
         yield ProgressEvent(phase="rendering", message="Inizio rendering PDF…")
@@ -246,8 +409,73 @@ class Pipeline:
         crops_dir.mkdir(exist_ok=True)
         saved_crops: list[Path] = []
 
+        # Setup iniziale checkpoint state
+        if self.checkpoint_store is not None and checkpoint_state is None:
+            total_batches = (
+                (total_pages + self.max_pages_per_batch - 1)
+                // self.max_pages_per_batch
+            )
+            checkpoint_state = new_checkpoint_state(
+                input_pdf,
+                total_batches=total_batches,
+                batch_size=self.max_pages_per_batch,
+            )
+
         for batch_start in range(0, total_pages, self.max_pages_per_batch):
             batch_end = min(batch_start + self.max_pages_per_batch, total_pages)
+            batch_idx = batch_start // self.max_pages_per_batch
+
+            # Cancel check: prima di iniziare il batch, verifichiamo se
+            # l'utente ha richiesto interruzione. Solleva PipelineCancelledError;
+            # il batch in corso NON viene abortito (per non lasciare checkpoint
+            # in stato inconsistente).
+            if self._cancel_event.is_set():
+                completed_so_far = (
+                    len(checkpoint_state.completed_batches)
+                    if checkpoint_state is not None else 0
+                )
+                yield ProgressEvent(
+                    phase="cancelling",
+                    message=(
+                        f"⏹️ Cancellazione richiesta dopo {completed_so_far} batch. "
+                        f"Salvataggio stato e uscita."
+                    ),
+                    current=batch_start, total=total_pages,
+                    percent=(batch_start / total_pages) * 100.0,
+                    extra={"cancelled": True,
+                           "completed_batches": completed_so_far},
+                )
+                # L'ultimo save (sotto) viene eseguito subito, poi raise.
+                if self.checkpoint_store is not None and checkpoint_state is not None:
+                    self.checkpoint_store.save(checkpoint_state)
+                raise PipelineCancelledError(completed_batches=completed_so_far)
+
+            # Checkpoint: riusa il markdown cached se il batch è già stato fatto.
+            cached_markdown = (
+                checkpoint_state.batch_markdown.get(str(batch_idx))
+                if checkpoint_state is not None and batch_idx in checkpoint_state.completed_batches
+                else None
+            )
+            if cached_markdown is not None:
+                # Split per pagina perché il markdown è già l'intero batch.
+                cached_parts = cached_markdown.split("\n\n<!-- pagebreak -->\n\n")
+                # Se il cached è un singolo chunk (no pagebreak), inseriscilo come 1 page
+                if len(cached_parts) == 1:
+                    cached_parts = [cached_parts[0]]
+                all_markdown_parts.extend(cached_parts)
+                all_pages_processed += batch_end - batch_start
+                yield ProgressEvent(
+                    phase="ocr",
+                    message=(
+                        f"Batch {batch_idx+1}/{checkpoint_state.total_batches} "
+                        f"recuperato da checkpoint"
+                    ),
+                    current=batch_end, total=total_pages,
+                    percent=(batch_end / total_pages) * 100.0,
+                    extra={"batch_size": batch_end - batch_start, "cached": True},
+                )
+                continue
+
             batch_pages = ingest_result.pages[batch_start:batch_end]
             yield ProgressEvent(
                 phase="ocr",
@@ -257,9 +485,35 @@ class Pipeline:
                 extra={"batch_size": len(batch_pages)},
             )
             normalized_paths = [p.normalized_path for p in batch_pages]
-            
+
             final_raw_text = ""
             for partial_text, status in self._runner.run_batch_iter(normalized_paths):
+                # Cancel check mid-batch: se l'utente preme Stop mentre
+                # l'inferenza sta girando, interrompi al prossimo token
+                # yielded. Più reattivo del check solo a inizio-batch.
+                if self._cancel_event.is_set():
+                    completed_so_far = (
+                        len(checkpoint_state.completed_batches)
+                        if checkpoint_state is not None else 0
+                    )
+                    logger.info(
+                        "Cancel ricevuto durante OCR batch %d. "
+                        "I batch %d..%d saranno saltati.",
+                        batch_idx, batch_idx, checkpoint_state.total_batches - 1
+                        if checkpoint_state else 0,
+                    )
+                    # Yield dell'evento cancelling per la UI prima del raise.
+                    yield ProgressEvent(
+                        phase="cancelling",
+                        message=(
+                            f"⏹️ Cancellazione ricevuta durante OCR batch "
+                            f"{batch_idx + 1}. Stop."
+                        ),
+                        extra={"cancelled": True, "completed_batches": completed_so_far},
+                    )
+                    raise PipelineCancelledError(
+                        completed_batches=completed_so_far,
+                    )
                 if status == "running":
                     chunk = partial_text[-500:] if len(partial_text) > 500 else partial_text
                     yield ProgressEvent(
@@ -271,81 +525,220 @@ class Pipeline:
                     )
                 else:
                     final_raw_text = partial_text
-                    
+
             raw_text = final_raw_text.strip()
-            
+
             # Dividi l'output grezzo per pagina
             pages_raw = re.split(r"(?i)<page>", raw_text)
             if pages_raw and not pages_raw[0].strip():
                 pages_raw = pages_raw[1:]
-                
+
             batch_markdown_parts = []
             for idx, page in enumerate(batch_pages):
                 page_text = pages_raw[idx] if idx < len(pages_raw) else ""
-                
+
                 def wrap_layout_tags(match):
                     label = match.group(1).strip()
                     text_content = match.group(2).strip()
                     return f'\n\n<div class="{label}">{text_content}</div>\n\n'
 
                 # Avvolge i tag footer/page_number/header con testo in un div XHTML per conservarli ed impaginarli
-                page_text = re.sub(
-                    r"<\|det\|>(footer|page_number|header)\[[^\]]+\]<\|/det\|>([^\n<]+)",
-                    wrap_layout_tags,
-                    page_text
-                )
+                # (B50: regex hoisted — compilato una sola volta, non per pagina)
+                page_text = _LAYOUT_TAG_RE.sub(wrap_layout_tags, page_text)
 
                 # Rimuoviamo eventuali tag residui vuoti di layout
-                page_text = re.sub(
-                    r"<\|det\|>(?:footer|page_number|header)\[[^\]]+\]<\|/det\|>",
-                    "",
-                    page_text
-                )
-                
-                # Trova tutti i tag di det su questa pagina
-                det_pattern = re.compile(
-                    r"<\|det\|>([^\[]+)\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]<\|/det\|>"
-                )
-                
+                # (B51: regex hoisted — compilato una sola volta, non per pagina)
+                page_text = _EMPTY_LAYOUT_RE.sub("", page_text)
+
                 img_counter = 0
-                def replace_tag(match):
+                page_num = page.page_num  # bind for closure (B023)
+                page_path = page.original_path  # bind for closure (B023)
+                # Larghezza della pagina originale in pixel (300 DPI):
+                # usata per calcolare la width % corretta del bbox denormalizzato.
+                # Pre-popolata in ``RenderedPage`` (vedi ``ingest.py``) per non
+                # dover riaprire l'immagine ad ogni pagina (issue #10).
+                _page_w_px = page.width_px or 0
+
+                def replace_tag(match, _pn=page_num, _pp=page_path, _page_w_px=_page_w_px):
                     nonlocal img_counter
                     label = match.group(1).strip()
                     x1, y1, x2, y2 = (int(g) for g in match.groups()[1:5])
                     bbox = BBox(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label)
-                    
+
                     if label in ("image", "figure", "table"):
                         img_label = f"{label}{img_counter}"
                         img_counter += 1
                         ext = ".webp" if self.eink_optimize else ".png"
-                        out_filename = f"page{page.page_num:04d}_{img_label}{ext}"
-                        out_path = crops_dir / f"page{page.page_num:04d}_{img_label}.png"
-                        
-                        result_path = crop_image_from_bbox(
-                            page.original_path, bbox, output_path=out_path, target_size=self.target_size
+                        out_filename = f"page{_pn:04d}_{img_label}{ext}"
+                        out_path = crops_dir / f"page{_pn:04d}_{img_label}.png"
+
+                        crop_result = crop_image_from_bbox_with_box(
+                            _pp, bbox, output_path=out_path, target_size=self.target_size
                         )
-                        if result_path and result_path.exists():
-                            saved_crops.append(result_path)
-                            # Calcola la larghezza percentuale relativa basata sulle coordinate originali
-                            width_pct = max(30.0, min(100.0, (x2 - x1) / 10.0))
-                            # Genera direttamente il tag img XHTML con stile inline per mantenere l'aspect ratio
-                            return f'\n\n<img src="images/{out_filename}" style="width:{width_pct:.1f}%;max-width:100%;height:auto;display:block;margin:1em auto;" />\n\n'
-                    
+                        if crop_result is None:
+                            return "\n\n"
+                        result_path, _pixel_box = crop_result
+                        if not result_path.exists():
+                            return "\n\n"
+                        saved_crops.append(result_path)
+                        # Larghezza % derivata dal bbox denormalizzato (in pixel
+                        # della pagina 300 DPI), non dalle coordinate [0,1000]
+                        # dell'immagine padded 1024: indipendente dall'aspect-
+                        # ratio della pagina.
+                        width_pct = bbox.width_pct_against(_page_w_px)
+                        # Clamp per evitare icone giganti o layout troppo stretti
+                        # (decisione utente: [25, 100]).
+                        width_pct = max(25.0, min(100.0, width_pct))
+                        img_html = (
+                            f'<img src="images/{out_filename}" '
+                            f'style="width:{width_pct:.1f}%;max-width:100%;'
+                            f'height:auto;display:block;margin:1em auto;" />'
+                        )
+                        return _build_figure(img_html, caption=None)
+
                     elif label == "title":
                         return "\n\n# "
                     elif label == "heading":
                         return "\n\n## "
                     elif label == "subtitle":
                         return "\n\n### "
-                        
+
                     return "\n\n"
-                
-                page_markdown = det_pattern.sub(replace_tag, page_text)
+
+                # Trova tutti i <|det|>...<|/det|> in ordine di apparizione e
+                # processali sequenzialmente. Questo permette di accoppiare
+                # ``image_caption`` / ``figure_caption`` / ``table_caption``
+                # con l'immagine/figura/tabella che li precede immediatamente
+                # (modello Unlimited-OCR emette la caption come token separato
+                # subito dopo l'immagine -- issue #10).
+                det_matches = list(_DET_PATTERN.finditer(page_text))
+                pieces: list[str] = []
+                cursor = 0
+                # Mappa label immagine -> prefisso caption atteso.
+                caption_label_for = {
+                    "image": "image_caption",
+                    "figure": "figure_caption",
+                    "table": "table_caption",
+                }
+                last_was_image: str | None = None  # prefisso caption atteso
+                last_img_html: str | None = None   # <img> pendente da wrappare
+                for det_match in det_matches:
+                    # 1) Emetti il testo fino al match corrente (eventualmente
+                    #    include caption orfane che non avevano immagine prima).
+                    pieces.append(page_text[cursor:det_match.start()])
+                    cursor = det_match.end()
+
+                    m_label = det_match.group(1).strip()
+                    m_groups = det_match.groups()[1:5]
+
+                    if m_label in ("image", "figure", "table"):
+                        # C'e un'immagine pendente dalla quale non e arrivata
+                        # una caption? Flushiamola senza caption.
+                        if last_img_html is not None:
+                            pieces.append(_build_figure(last_img_html, caption=None))
+                            last_img_html = None
+                            last_was_image = None
+
+                        # Costruisci il tag <img> (stessa logica di replace_tag).
+                        x1, y1, x2, y2 = (int(g) for g in m_groups)
+                        bbox = BBox(
+                            x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=m_label,
+                        )
+                        img_label = f"{m_label}{img_counter}"
+                        img_counter += 1
+                        ext = ".webp" if self.eink_optimize else ".png"
+                        out_filename = f"page{page_num:04d}_{img_label}{ext}"
+                        out_path = crops_dir / f"page{page_num:04d}_{img_label}.png"
+                        crop_result = crop_image_from_bbox_with_box(
+                            page_path,
+                            bbox,
+                            output_path=out_path,
+                            target_size=self.target_size,
+                        )
+                        if crop_result is None:
+                            continue
+                        result_path, _pixel_box = crop_result
+                        if not result_path.exists():
+                            continue
+                        saved_crops.append(result_path)
+                        width_pct = bbox.width_pct_against(_page_w_px)
+                        width_pct = max(25.0, min(100.0, width_pct))
+                        last_img_html = (
+                            f'<img src="images/{out_filename}" '
+                            f'style="width:{width_pct:.1f}%;max-width:100%;'
+                            f'height:auto;display:block;margin:1em auto;" />'
+                        )
+                        last_was_image = caption_label_for[m_label]
+                        continue
+
+                    if (
+                        m_label in ("image_caption", "figure_caption", "table_caption")
+                        and last_was_image == m_label
+                        and last_img_html is not None
+                    ):
+                        # Estrai il testo della caption: tutto cio che segue
+                        # il tag fino al prossimo newline / prossimo <|det|>.
+                        tail = page_text[
+                            det_match.end():det_match.end() + 400
+                        ]
+                        cut = re.search(r"[\n]|<\|", tail)
+                        caption_text = (
+                            tail[: cut.start()] if cut else tail
+                        ).strip()
+                        caption_text = re.sub(
+                            r"<\|ref\|>.*?<\|/ref\|>", "", caption_text,
+                        ).strip()
+                        # Flush del <figure> con <figcaption>.
+                        pieces.append(
+                            _build_figure(last_img_html, caption=caption_text or None),
+                        )
+                        last_img_html = None
+                        last_was_image = None
+                        continue
+
+                    # Qualsiasi altro label (text, header, footer, page_number,
+                    # caption orfana, ...) -- flush di un eventuale <figure>
+                    # pendente e poi delega a ``replace_tag`` per il testo.
+                    if last_img_html is not None:
+                        pieces.append(_build_figure(last_img_html, caption=None))
+                        last_img_html = None
+                        last_was_image = None
+                    pieces.append(replace_tag(det_match))
+
+                # Flush finale di un <figure> pendente.
+                if last_img_html is not None:
+                    pieces.append(_build_figure(last_img_html, caption=None))
+                pieces.append(page_text[cursor:])
+
+                page_markdown = "".join(pieces)
                 page_markdown = self._runner._strip_image_tokens(page_markdown)
                 batch_markdown_parts.append(page_markdown)
-                
+
+            # Salva il batch sul checkpoint PRIMA di passare al successivo.
+            batch_markdown_str = "\n\n<!-- pagebreak -->\n\n".join(batch_markdown_parts)
             all_markdown_parts.extend(batch_markdown_parts)
             all_pages_processed += len(batch_pages)
+
+            if self.checkpoint_store is not None and checkpoint_state is not None:
+                completed = list(checkpoint_state.completed_batches)
+                if batch_idx not in completed:
+                    completed.append(batch_idx)
+                completed.sort()
+                state_dict = {k: v for k, v in checkpoint_state.batch_markdown.items()}
+                state_dict[str(batch_idx)] = batch_markdown_str
+                from datetime import datetime, timezone
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                checkpoint_state = CheckpointState(
+                    source_pdf_sha256=checkpoint_state.source_pdf_sha256,
+                    source_pdf_size_bytes=checkpoint_state.source_pdf_size_bytes,
+                    total_batches=checkpoint_state.total_batches,
+                    batch_size=checkpoint_state.batch_size,
+                    completed_batches=completed,
+                    batch_markdown=state_dict,
+                    created_at=checkpoint_state.created_at,
+                    updated_at=ts,
+                )
+                self.checkpoint_store.save(checkpoint_state)
 
         full_markdown = "\n\n<!-- pagebreak -->\n\n".join(all_markdown_parts)
 
@@ -391,7 +784,10 @@ class Pipeline:
                 "images_used_in_epub": len(final_images),
                 "dpi": self.dpi,
                 "quantization": self.inference_config.quantization.value,
-            },
+                            # Espone il markdown pulito per test introspezione
+                            # (issue #10: verifica emissione <figure>/<figcaption>).
+                            "cleaned_markdown": cleaned,
+                        },
         )
         yield ProgressEvent(
             phase="done",
@@ -402,9 +798,11 @@ class Pipeline:
 
 
 __all__ = [
+    "CheckpointMismatchError",
+    "ModelNotFoundError",
     "Pipeline",
+    "PipelineCancelledError",
     "PipelineResult",
     "ProgressEvent",
-    "ModelNotFoundError",
     "check_model_available",
 ]

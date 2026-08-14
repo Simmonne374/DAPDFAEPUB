@@ -129,7 +129,7 @@ def test_run_batch_iter_propagates_model_exception(monkeypatch: pytest.MonkeyPat
 
     class _ExplodingModel(_FakeModel):
         def infer(self, *args, **kwargs) -> str:
-            print("partial_token", end="", flush=True)  # noqa: T201
+            print("partial_token", end="", flush=True)
             raise RuntimeError("model kaboom")
 
     runner = UnlimitedOCRRunner(InferenceConfig())
@@ -162,7 +162,7 @@ def test_no_global_sys_stdout_patching(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "load_model", lambda: None)
 
     sentinel = object()
-    sys.stdout = sentinel  # type: ignore[assignment]  # noqa: T201
+    sys.stdout = sentinel  # type: ignore[assignment]
     try:
         list(runner.run_batch_iter([Path("fake.png")]))
         assert sys.stdout is sentinel, (
@@ -171,10 +171,10 @@ def test_no_global_sys_stdout_patching(monkeypatch: pytest.MonkeyPatch) -> None:
             "il ripristino automatico."
         )
     finally:
-        sys.stdout = sentinel  # type: ignore[assignment]  # noqa: T201
+        sys.stdout = sentinel  # type: ignore[assignment]
 
     # Anche in caso di eccezione il context manager deve fare il pop.
-    sys.stdout = sentinel  # type: ignore[assignment]  # noqa: T201
+    sys.stdout = sentinel  # type: ignore[assignment]
     try:
         list(runner.run_batch_iter([Path("fake.png")]))
     except RuntimeError:

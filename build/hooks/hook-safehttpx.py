@@ -6,7 +6,7 @@ non include il modulo né il data file, causando
 ``FileNotFoundError: .../safehttpx/version.txt`` all'avvio dell'app.
 """
 
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = collect_submodules("safehttpx")
 datas = collect_data_files("safehttpx")

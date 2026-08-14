@@ -7,7 +7,7 @@ modulo + i suoi data files (in particolare ``version.txt`` che il modulo
 legge a runtime tramite ``Path(__file__).parent / 'version.txt'``).
 """
 
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = collect_submodules("groovy")
 datas = collect_data_files("groovy")

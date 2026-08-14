@@ -1,5 +1,6 @@
-## 2024-05-18 - [Gradio UI] Explicit Guidance on Optional Fields
-
-**Learning:** Non-technical users using Gradio UI interfaces are often unsure about the backend's default behavior for optional fields (like 'Book Title' falling back to the filename if left empty). This leads to confusion or repetitive work. Adding descriptive helper texts explicitly outlining default fallbacks is crucial for easing cognitive load.
-
-**Action:** Whenever implementing optional configuration inputs in a Gradio block (or equivalent), ensure an `info` description explicitly communicates what the default behavior will be if the user leaves the field untouched.
+## 2024-05-18 - Better visibility for long operations
+**Learning:** Text-only terminal logs in Gradio applications are often insufficient for conveying critical and terminal state information (like success, failure, or missing prerequisites) because they require users to constantly monitor the scrolling area.
+**Action:** Always use native UI toast notifications (`gr.Info`, `gr.Warning`, `gr.Error`) in conjunction with terminal logs to ensure critical events are immediately visible to the user regardless of where they are looking on the page.
+## 2024-05-24 - Info Text vs Placeholder
+**Learning:** Important instructions (like 'leave blank to save in default location') should go in the `info` property, not `placeholder`, because placeholders disappear when the user starts typing, causing them to forget the instruction.
+**Action:** Always prefer `info` for persistent field-level instructions, keeping `placeholder` strictly for formatting examples.

@@ -16,7 +16,6 @@ from relictoepub.postprocess.bbox_crop import (
 from relictoepub.postprocess.text_clean import clean_text, count_words
 from relictoepub.postprocess.webp_optim import optimize_batch, optimize_for_eink
 
-
 # ============================================================
 # bbox_crop
 # ============================================================
@@ -78,6 +77,44 @@ def test_crop_image_too_small_returns_none(sample_image: Path, tmp_path: Path) -
     tiny = BBox(500, 500, 501, 501)
     result = crop_image_from_bbox(sample_image, tiny, output_path=tmp_path / "x.png")
     assert result is None
+
+
+def test_crop_image_from_bbox_with_box_returns_pixel_bbox(
+    sample_image: Path, tmp_path: Path,
+) -> None:
+    """La variante ``_with_box`` deve tornare sia ``Path`` che bbox denormalizzato."""
+    from relictoepub.postprocess.bbox_crop import crop_image_from_bbox_with_box
+
+    bbox = BBox(125, 0, 875, 1000)  # full-immagine per 600x800
+    out = tmp_path / "crop.png"
+    result = crop_image_from_bbox_with_box(sample_image, bbox, output_path=out)
+    assert result is not None
+    crop_path, pixel_box = result
+    assert crop_path.is_file()
+    # 600×800 full-immagine → bbox denormalizzato = (0, 0, 600, 800)
+    assert pixel_box == (0, 0, 600, 800)
+
+
+def test_bbox_width_pct_against_page_width() -> None:
+    """``width_pct_against`` calcola la larghezza % rispetto alla pagina."""
+    # Caso 1: pagina larga 1000 px, bbox largo 250 px → 25%.
+    bbox = BBox(0, 0, 250, 100)
+    assert bbox.width_pct_against(1000) == pytest.approx(25.0)
+
+    # Caso 2: pagina larga 0 (degenerate) → 0%.
+    assert bbox.width_pct_against(0) == 0.0
+
+    # Caso 3: bbox più largo della pagina → clamp a 100%.
+    wide_bbox = BBox(0, 0, 1500, 100)
+    assert wide_bbox.width_pct_against(1000) == 100.0
+
+    # Caso 4: bbox largo quanto la pagina → 100%.
+    full = BBox(0, 0, 1000, 100)
+    assert full.width_pct_against(1000) == 100.0
+
+    # Caso 5: bbox = 0 larghezza → 0%.
+    zero = BBox(500, 0, 500, 100)
+    assert zero.width_pct_against(1000) == 0.0
 
 
 def test_extract_bbox_tokens_multiple() -> None:

@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from PIL import Image
 
@@ -55,8 +55,26 @@ class BBox:
     def area(self) -> float:
         return self.width * self.height
 
+    def width_pct_against(self, page_width_px: float) -> float:
+        """Restituisce la larghezza del bbox come percentuale della pagina.
+
+        Utile per il layout EPUB: una figura che occupa il 70% della pagina
+        verrà renderizzata con ``width: 70%`` nel CSS invece di essere
+        scalata solo in base alle coordinate normalizzate (che ignorano
+        il padding introdotto da :func:`relictoepub.ingest._normalize_to_square`).
+
+        Args:
+            page_width_px: larghezza della pagina in pixel (es. immagine 300 DPI).
+
+        Returns:
+            Percentuale 0–100. ``0.0`` se ``page_width_px`` non è positivo.
+        """
+        if page_width_px <= 0:
+            return 0.0
+        return max(0.0, min(100.0, self.width / page_width_px * 100.0))
+
     @classmethod
-    def from_string(cls, raw: str) -> "BBox":
+    def from_string(cls, raw: str) -> BBox:
         """Parsa una stringa tipo "<|det|>label [x1, y1, x2, y2]<|/det|>" o "<|bbox|...>"."""
         match = re.search(
             r"<\|det\|>([^\[]+)\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]<\|/det\|>",
@@ -103,8 +121,8 @@ def denormalize_bbox(
     img_w, img_h = image_size
 
     scale = target_size / max(img_w, img_h)
-    new_w = max(1, int(round(img_w * scale)))
-    new_h = max(1, int(round(img_h * scale)))
+    new_w = max(1, round(img_w * scale))
+    new_h = max(1, round(img_h * scale))
 
     paste_x = (target_size - new_w) / 2.0
     paste_y = (target_size - new_h) / 2.0
@@ -121,10 +139,10 @@ def denormalize_bbox(
     x_max_mapped = (x_max_1024 - paste_x) / scale
     y_max_mapped = (y_max_1024 - paste_y) / scale
 
-    left = int(round(x_min_mapped))
-    upper = int(round(y_min_mapped))
-    right = int(round(x_max_mapped))
-    lower = int(round(y_max_mapped))
+    left = round(x_min_mapped)
+    upper = round(y_min_mapped)
+    right = round(x_max_mapped)
+    lower = round(y_max_mapped)
 
     # Clipping difensivo per evitare crop fuori immagine
     left = max(0, min(img_w - 1, left))
@@ -162,6 +180,47 @@ def crop_image_from_bbox(
     if not image_path.is_file():
         raise FileNotFoundError(f"Immagine sorgente mancante: {image_path}")
 
+    result = crop_image_from_bbox_with_box(
+        image_path=image_path,
+        bbox=bbox,
+        output_path=output_path,
+        normalize_range=normalize_range,
+        min_size=min_size,
+        target_size=target_size,
+    )
+    if result is None:
+        return None
+    return result[0]
+
+
+def crop_image_from_bbox_with_box(
+    image_path: str | Path,
+    bbox: BBox,
+    output_path: str | Path | None = None,
+    *,
+    normalize_range: float = DEFAULT_NORMALIZE_RANGE,
+    min_size: int = 32,
+    target_size: int = 1024,
+) -> tuple[Path, tuple[int, int, int, int]] | None:
+    """Variante di :func:`crop_image_from_bbox` che ritorna anche il bbox in pixel.
+
+    Args:
+        image_path: PNG a 300 DPI (output di :func:`relictoepub.ingest.render_pdf`).
+        bbox: BBox nel formato del paper.
+        output_path: Dove salvare il crop. Se ``None``, viene derivato.
+        normalize_range: Valore massimo della scala normalizzata.
+        min_size: Dimensione minima in pixel del crop.
+        target_size: Dimensione del quadrato normalizzato (default 1024).
+
+    Returns:
+        Tupla ``(path, pixel_box)`` con il bbox denormalizzato in pixel
+        dell'immagine originale, oppure ``None`` se scartato per
+        dimensione insufficiente.
+    """
+    image_path = Path(image_path)
+    if not image_path.is_file():
+        raise FileNotFoundError(f"Immagine sorgente mancante: {image_path}")
+
     with Image.open(image_path) as img:
         w, h = img.size
         pixel_box = denormalize_bbox(bbox, (w, h), normalize_range=normalize_range, target_size=target_size)
@@ -187,7 +246,7 @@ def crop_image_from_bbox(
         logger.debug(
             "Crop salvato: %s (%dx%d px)", output_path.name, width_px, height_px,
         )
-        return output_path
+        return output_path, pixel_box
 
 
 def extract_bbox_tokens(ocr_text: str) -> list[BBox]:
@@ -254,10 +313,11 @@ def crop_batch_from_pages(
 
 
 __all__ = [
-    "BBox",
     "DEFAULT_NORMALIZE_RANGE",
-    "crop_image_from_bbox",
+    "BBox",
     "crop_batch_from_pages",
+    "crop_image_from_bbox",
+    "crop_image_from_bbox_with_box",
     "denormalize_bbox",
     "extract_bbox_tokens",
 ]

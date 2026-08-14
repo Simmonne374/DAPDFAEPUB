@@ -22,9 +22,12 @@ import shutil
 import tempfile
 import uuid
 import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+
+import pypandoc  # importato top-level: errore amichevole se manca
 
 from relictoepub.compile.eink_css import EINK_CSS
 
@@ -198,11 +201,14 @@ def _split_into_chapters(
 
 
 def _check_pandoc() -> str:
-    """Verifica che pandoc sia installato e ritorna il path."""
+    """Verifica che pandoc sia installato e ritorna il path (cached after first call)."""
+    global _pandoc_path_cache
+    if _pandoc_path_cache is not None:
+        return _pandoc_path_cache
     try:
-        import pypandoc
-        return pypandoc.get_pandoc_path()
-    except Exception:
+        _pandoc_path_cache = pypandoc.get_pandoc_path()
+        return _pandoc_path_cache
+    except (ImportError, OSError):
         pass
     pandoc = shutil.which("pandoc")
     if pandoc is None:
@@ -211,38 +217,54 @@ def _check_pandoc() -> str:
             "https://github.com/jgm/pandoc/releases e installalo, "
             "poi riavvia il terminale."
         )
-    return pandoc
+    _pandoc_path_cache = pandoc
+    return _pandoc_path_cache
+
+
+_pandoc_path_cache: str | None = None
 
 
 def _convert_markdown_to_xhtml(markdown: str) -> str:
-    """Markdown → XHTML strict via pypandoc."""
-    try:
-        import pypandoc
-    except ImportError as exc:  # pragma: no cover - dipendenza obbligatoria
-        raise RuntimeError(
-            "pypandoc non installato. Aggiungi 'pypandoc' alle dipendenze."
-        ) from exc
-    _check_pandoc()  # errore amichevole se manca
+    """Markdown → frammento HTML strict via pypandoc (no DOCTYPE/wrapper)."""
+    _check_pandoc()  # errore amichevole se manca; cached
+    # NOTA: NON usare --standalone perché produce <!DOCTYPE html>...<html>...
+    # che anniderebbe un documento dentro ogni capitolo XHTML, rendendo
+    # l'EPUB invalido secondo EPUB3. Usiamo solo frammenti di body.
     return pypandoc.convert_text(
         markdown, to="html5", format="markdown+smart",
-        extra_args=["--standalone", "--no-highlight", "--wrap=none"],
+        extra_args=["--wrap=none"],
     )
 
 
 def _chapter_xhtml(title: str, body_markdown: str, level: int) -> str:
-    """Crea l'XHTML di un capitolo, wrappato in un body semanticamente corretto."""
+    """Crea l'XHTML completo di un capitolo EPUB3 (wrapper obbligatorio).
+
+    Usa ``pypandoc`` senza ``--standalone`` (che anniderebbe il DOCTYPE
+    dentro ogni capitolo). Il wrapper XHTML/root con namespace viene
+    costruito qui per garantire EPUB3 conformance.
+    """
     full_md = f"# {title}\n\n{body_markdown}" if title else body_markdown
-    html = _convert_markdown_to_xhtml(full_md)
+    body_fragment = _convert_markdown_to_xhtml(full_md)
     # Sostituisci il primo heading h1 generato da pypandoc con un <h1 class="chapter-title">
     if title:
-        html = re.sub(
+        body_fragment = re.sub(
             r"<h1[^>]*>.*?</h1>",
             f'<h1 class="chapter-title">{_xml_escape(title)}</h1>',
-            html,
+            body_fragment,
             count=1,
             flags=re.DOTALL,
         )
-    return html
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n'
+        '<head>\n'
+        f'  <title>{_xml_escape(title) if title else "Chapter"}</title>\n'
+        '  <link rel="stylesheet" href="style.css"/>\n'
+        '</head>\n'
+        f'<body>\n{body_fragment}\n</body>\n'
+        '</html>\n'
+    )
 
 
 def _xml_escape(text: str) -> str:
@@ -322,6 +344,24 @@ def _build_navigation_xhtml(title: str, chapters: list[ChapterInfo]) -> str:
 </html>"""
 
 
+def _build_chapter(index: int, raw: dict) -> ChapterInfo:
+    """Helper: costruisce un singolo ChapterInfo da un dict splitter output."""
+    body = raw.get("body", "")
+    title = raw.get("title", "") or ""
+    xhtml = _chapter_xhtml(
+        title="",  # non generiamo un titolo H1 duplicato in testa al file
+        body_markdown=body,
+        level=raw.get("level", 1),
+    )
+    xhtml = _inject_responsive_images(xhtml)
+    return ChapterInfo(
+        title=title or f"Pagina {index + 1}",
+        level=raw.get("level", 1),
+        filename=f"chap_{index + 1:04d}.xhtml",
+        xhtml=xhtml,
+    )
+
+
 def build_epub(
     markdown: str,
     images: Sequence[str | Path] = (),
@@ -354,27 +394,20 @@ def build_epub(
     chapters_raw = _split_into_chapters(
         markdown, chapter_pages=metadata.chapter_pages
     )
-    chapters: list[ChapterInfo] = []
-    for i, raw in enumerate(chapters_raw):
-        body = raw.get("body", "")
-        # Il titolo è già stato deciso dallo splitter adattivo (H1, H2,
-        # page-grouping, o fallback "Pagina N"). Lo accettiamo così com'è.
-        title = raw.get("title", "") or ""
-
-        xhtml = _chapter_xhtml(
-            title="",  # non generiamo un titolo H1 duplicato in testa al file
-            body_markdown=body,
-            level=raw.get("level", 1),
-        )
-        xhtml = _inject_responsive_images(xhtml)
-        chapters.append(
+    # Fallback B40: markdown vuoto o splitter non produce capitoli → almeno 1 capitolo
+    if not chapters_raw:
+        chapters = [
             ChapterInfo(
-                title=title or f"Pagina {i+1}",
-                level=raw.get("level", 1),
-                filename=f"chap_{i+1:04d}.xhtml",
-                xhtml=xhtml,
+                title="Empty",
+                level=1,
+                filename="chap_0001.xhtml",
+                xhtml=_chapter_xhtml("", "(contenuto vuoto)", 1),
             )
-        )
+        ]
+    else:
+        chapters = [
+            _build_chapter(i, raw) for i, raw in enumerate(chapters_raw)
+        ]
 
     chapters = _add_cover_page(chapters, cover_image)
 
@@ -414,7 +447,7 @@ def build_epub(
             try:
                 from relictoepub.postprocess.webp_optim import optimize_for_eink
                 optimize_for_eink(cover_image, cover_dest)
-            except Exception:
+            except (ImportError, OSError, ValueError):
                 shutil.copy(cover_image, cover_dest)
 
         # Asset images (WebP ready)
@@ -473,7 +506,7 @@ def build_epub(
                 f'media-type="application/xhtml+xml"/>'
             )
             spine_items.append(f'<itemref idref="{item_id}"/>')
-        for img_file in images_dir.iterdir():
+        for img_file in sorted(images_dir.iterdir(), key=lambda p: p.name):
             mt = _IMAGE_MIME.get(img_file.suffix.lower(), "application/octet-stream")
             # Prefisso "img_" + deduplicazione (fig.jpg e fig.png collidono).
             item_id = _unique_id(f"img_{img_file.stem}")
@@ -490,7 +523,7 @@ def build_epub(
     <dc:title>{_xml_escape(metadata.title)}</dc:title>
     <dc:creator>{_xml_escape(metadata.author)}</dc:creator>
     <dc:language>{_xml_escape(metadata.language)}</dc:language>
-    <meta property="dcterms:modified">2026-07-06T00:00:00Z</meta>
+    <meta property="dcterms:modified">{datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}</meta>
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>

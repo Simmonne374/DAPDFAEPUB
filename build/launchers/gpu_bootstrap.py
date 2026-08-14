@@ -21,12 +21,10 @@ mostri sempre cosa sta succedendo (mai "sospeso" >2 s).
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 # Quando questo script è bundlato da PyInstaller, le dipendenze di launcher
 # (tkinter non serve qui) sono già disponibili via sys.path.
@@ -71,7 +69,7 @@ TORCH_VERSION_DEFAULT = "2.4.0"
 # ============================================================
 
 
-def parse_compute_cap(text: str) -> Optional[tuple[int, int]]:
+def parse_compute_cap(text: str) -> tuple[int, int] | None:
     """Parse ``nvidia-smi --query-gpu=compute_cap`` (es. "8.6") → (8, 6)."""
     try:
         major, minor = text.strip().split(".")
@@ -80,7 +78,7 @@ def parse_compute_cap(text: str) -> Optional[tuple[int, int]]:
         return None
 
 
-def get_gpu_info_via_smi() -> Optional[dict]:
+def get_gpu_info_via_smi() -> dict | None:
     """Ritorna info GPU via ``nvidia-smi`` + ``pynvml``, o ``None`` se non disponibile."""
     info: dict = {}
 
@@ -100,7 +98,6 @@ def get_gpu_info_via_smi() -> Optional[dict]:
                 info["compute_cap"] = parse_compute_cap(first[1])
                 info["driver_version"] = first[2].strip()
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
 
     # 2) pynvml / nvidia-ml-py per arricchire (cuDNN, memorie, ecc.)
         try:
@@ -136,7 +133,7 @@ def select_wheel_for_gpu(compute_cap: tuple[int, int], driver_str: str) -> tuple
             selected = CUDA_WHEEL[candidates[0]]
         else:
             selected = ("cpu", "")
-    cuda_tag, min_driver = selected
+    cuda_tag, _min_driver = selected
 
     # Controlla versione driver
     try:
@@ -251,7 +248,6 @@ def download_with_progress(url: str, dest: Path, state: ProgressState, *, timeou
 
                 started = time.time()
                 last_chunk_time = time.time()
-                last_logged = downloaded
                 last_log_time = time.time()
 
                 with dest.open(mode) as f:
@@ -283,7 +279,6 @@ def download_with_progress(url: str, dest: Path, state: ProgressState, *, timeou
                                                 eta_seconds=eta,
                                             )
                                             last_log_time = now
-                                            last_logged = downloaded
 
                 # Download completato: scrivi stato finale
                 elapsed = max(0.001, time.time() - started)
@@ -400,16 +395,128 @@ def install_wheel_inline(wheel_path: Path, state: ProgressState) -> bool:
 
 
 # Cache del path dell'app exe, impostato in main()
-_app_exe_path: Optional[Path] = None
+_app_exe_path: Path | None = None
 
 
-def _get_app_exe_path() -> Optional[Path]:
+def _get_app_exe_path() -> Path | None:
     return _app_exe_path
 
 
 def _set_app_exe_path(p: Path) -> None:
     global _app_exe_path
     _app_exe_path = p
+
+
+# Lettere di unita storicamente non scrivibili su Windows moderni (floppy).
+# Usate in _check_install_path per intercettare percorsi invalidi tipo
+# "A:\\RelicToEpub" che arrivano da shortcut orfani o vecchie installazioni.
+_LETTERE_FLOPPY = {"A", "B"}
+
+
+def _log_selfcheck(message: str) -> None:
+    """Appende un messaggio al log di diagnostica ``launcher_selfcheck.log``."""
+    try:
+        local = os.environ.get(
+            "LOCALAPPDATA", str(Path.home() / "AppData/Local")
+        )
+        log_dir = Path(local) / "RelicToEpub" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "launcher_selfcheck.log"
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(f"[{ts}] [bootstrap] {message}\n")
+    except OSError:
+        pass  # diagnostico, mai bloccante
+
+
+def _check_install_path(app_exe: Path) -> None:
+    """Valida il percorso di installazione per intercettare shortcut orfani.
+
+    Puo essere chiamato PRIMA dell'avvio del bootstrap vero (per fallire
+    precocemente senza scaricare nulla) e DURANTE l'avvio (per logging).
+
+    Cosa controlla:
+    1. L'exe padre esiste ed e un Path risolvibile.
+    2. L'exe padre non risiede in una unita floppy (A:\\, B:\\).
+    3. La cartella di installazione contiene almeno un marker dell'app
+       (``RelicToEpubBoot.exe``, ``_internal\\``, ecc.).
+    4. (Opzionale) Coerenza con la chiave di registro Uninstall: se il path
+       corrente differisce dal ``InstallLocation`` registrato, logga un
+       warning (l'utente ha spostato l'app o sta usando un exe portatile).
+
+    NON solleva eccezioni: in caso di anomalia logga diagnostic, imposta
+    env var ``RELICTOEPUB_PATH_WARNING=1`` e prosegue (per non rompere
+    installazioni leggittime "a mano").
+    """
+    issues: list[str] = []
+
+    try:
+        if not app_exe.exists():
+            issues.append(f"app_exe non esistente: {app_exe}")
+    except OSError as exc:
+        issues.append(f"app_exe.errore_accesso: {exc}")
+
+    drive = app_exe.drive or ""
+    if drive.rstrip(":").upper() in _LETTERE_FLOPPY:
+        issues.append(
+            f"app_exe punta a unita floppy {drive!r} ({app_exe}): "
+            f"probabile shortcut orfano a USB rimossa"
+        )
+
+    parent = app_exe.parent
+    expected_markers = [
+        parent / "RelicToEpubBoot.exe",
+        parent / "_internal",
+        parent / "RelicToEpubUI.exe",
+        parent / "RelicToEpubCLI.exe",
+    ]
+    if not any(m.exists() for m in expected_markers):
+        issues.append(
+            f"Nessun marker RelicToEpub nella cartella {parent}: "
+            f"probabile installazione corrotta o spostata"
+        )
+
+    # Warning se il path diverge dalla chiave di registro di disinstallazione
+    try:
+        import winreg  # type: ignore
+        # Apriamo HKLM\...\Uninstall\{AppId}_is1 / InstallLocation
+        appid_guid = "{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}"
+        reg_paths = [
+            (winreg.HKEY_LOCAL_MACHINE, appid_guid),
+            (winreg.HKEY_CURRENT_USER, appid_guid),
+        ]
+        for hive, guid in reg_paths:
+            try:
+                with winreg.OpenKey(
+                    hive,
+                    f"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\"
+                    f"Uninstall\\{guid}_is1",
+                ) as key:
+                    registered, _ = winreg.QueryValueEx(
+                        key, "InstallLocation"
+                    )
+                if registered and registered != str(parent):
+                    issues.append(
+                        f"path diverge da registro "
+                        f"({registered} vs {parent}): probabile "
+                        f"installazione spostata manualmente"
+                    )
+                break
+            except OSError:
+                continue
+    except ImportError:
+        # Non Windows o winreg non disponibile: skip silenzioso.
+        pass
+
+    if issues:
+        os.environ["RELICTOEPUB_PATH_WARNING"] = "1"
+        for issue in issues:
+            _log_selfcheck(issue)
+        # Lo state verra impostato a runtime se disponibile; qui logghiamo
+        # direttamente per i casi in cui lo splash non e ancora attivo.
+        sys.stderr.write(
+            f"[gpu_bootstrap] ATTENZIONE: {' | '.join(issues)}\n"
+        )
 
 
 # ============================================================
@@ -424,13 +531,13 @@ def _wheel_cache_dir() -> Path:
     return p
 
 
-def find_cached_wheel(tag: str) -> Optional[Path]:
+def find_cached_wheel(tag: str) -> Path | None:
     cache = _wheel_cache_dir()
     matches = sorted(cache.glob(f"torch-*-{tag}-*.whl"))
     return matches[0] if matches else None
 
 
-def download_wheel_for(tag: str, state: ProgressState) -> Optional[Path]:
+def download_wheel_for(tag: str, state: ProgressState) -> Path | None:
     """Scarica il wheel torch per il tag (``cu118``, ``cu124``, ``cu126``, ``cpu``).
 
     Per ``cpu`` usa l'index ``pytorch.org/whl/cpu``; per i CUDA tag usa
@@ -490,6 +597,19 @@ def main(argv: list[str]) -> int:
     if not app_exe.exists():
         state.error(f"App launcher non trovato: {app_exe}")
         return 66
+
+    # Validazione del percorso di installazione PRIMA di procedere.
+    # Se troviamo problemi gravi (es. percorso su unita floppy inesistente,
+    # nessun marker RelicToEpub nella cartella), falliamo SUBITO con un
+    # messaggio comprensibile invece di crashare con "CreateProcess: 5"
+    # molto piu tardi dentro Windows.
+    _check_install_path(app_exe)
+    if os.environ.get("RELICTOEPUB_PATH_WARNING") == "1":
+        sys.stderr.write(
+            f"[gpu_bootstrap] Percorso di installazione sospetto "
+            f"({app_exe.parent}). Vedi launcher_selfcheck.log per "
+            f"dettagli.\n"
+        )
 
     _set_app_exe_path(app_exe)
 

@@ -16,9 +16,9 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 import pymupdf as fitz  # PyMuPDF
 from PIL import Image
@@ -36,6 +36,10 @@ class RenderedPage:
         height_pt: Altezza della pagina in punti tipografici.
         original_path: PNG a 300 DPI (o comunque il dpi specificato).
         normalized_path: PNG 1024×1024 normalizzata per l'inferenza.
+        width_px: Larghezza dell'immagine ``original_path`` in pixel.
+            Default 0 per retro-compatibilità con costruttori vecchi.
+        height_px: Altezza dell'immagine ``original_path`` in pixel.
+            Default 0 per retro-compatibilità con costruttori vecchi.
     """
 
     page_num: int
@@ -43,6 +47,8 @@ class RenderedPage:
     height_pt: float
     original_path: Path
     normalized_path: Path
+    width_px: int = 0
+    height_px: int = 0
     extra_paths: list[Path] = field(default_factory=list)
 
 
@@ -79,8 +85,8 @@ def _normalize_to_square(pil_image: Image.Image, target_size: int) -> Image.Imag
 
     # Scala l'immagine per riempire il lato lungo mantenendo aspect ratio
     scale = target_size / max(w, h)
-    new_w = max(1, int(round(w * scale)))
-    new_h = max(1, int(round(h * scale)))
+    new_w = max(1, round(w * scale))
+    new_h = max(1, round(h * scale))
     resized = pil_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
     # Canvas quadrato bianco
@@ -161,21 +167,23 @@ def render_pdf(
             hires_path = hires_dir / f"page_{page_num:04d}.png"
             pix.save(str(hires_path))
 
-            # 1024×1024 normalizzata
-            pil_hires = Image.open(hires_path)
-            pil_norm = _normalize_to_square(pil_hires, target_size)
-            norm_path = model_dir / f"page_{page_num:04d}.png"
-            pil_norm.save(norm_path, optimize=True)
+            # 1024×1024 normalizzata (B31: usa context manager per chiudere l'handler)
+            with Image.open(hires_path) as pil_hires:
+                pil_norm = _normalize_to_square(pil_hires, target_size)
+                norm_path = model_dir / f"page_{page_num:04d}.png"
+                pil_norm.save(norm_path, optimize=True)
 
             pages.append(
                 RenderedPage(
                     page_num=page_num,
                     width_pt=width_pt,
                     height_pt=height_pt,
-                    original_path=hires_path,
-                    normalized_path=norm_path,
-                )
-            )
+                                width_px=pix.width,
+                                height_px=pix.height,
+                                original_path=hires_path,
+                                normalized_path=norm_path,
+                            )
+                        )
             logger.debug(
                 "Renderizzata pagina %d/%d: %dx%d pt → %s",
                 page_num, total, int(width_pt), int(height_pt), hires_path.name,
