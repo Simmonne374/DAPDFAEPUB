@@ -431,21 +431,57 @@ def build_epub(
         (oebps / "nav.xhtml").write_text(_build_navigation_xhtml(metadata.title, chapters), encoding="utf-8")
 
         # content.opf — descrittore del package
+        # Mappa estensione → MIME type conforme agli standard EPUB/IDPF.
+        # Evita MIME non-standard (es. "image/jpg") che gli EpubCheck rifiutano.
+        _IMAGE_MIME = {
+            ".webp": "image/webp",
+            ".jpeg": "image/jpeg",
+            ".jpg": "image/jpeg",
+            ".png": "image/png",
+            ".gif": "image/gif",
+            ".svg": "image/svg+xml",
+        }
+
+        # Costruisce ID unici per il manifest OPF: lo standard richiede che
+        # ogni <item> abbia un id distinto, altrimenti EpubCheck e molti
+        # e-reader rifiutano il file. Due capitoli con stesso stem o due
+        # immagini con stesso stem ma estensioni diverse colliderebbero.
+        used_ids: set[str] = set()
+
+        def _unique_id(base: str) -> str:
+            """Restituisce ``base`` se libero, altrimenti ``base_1``, ``base_2``…"""
+            candidate = base
+            suffix = 1
+            while candidate in used_ids:
+                candidate = f"{base}_{suffix}"
+                suffix += 1
+            used_ids.add(candidate)
+            return candidate
+
         manifest_items: list[str] = []
+        spine_items: list[str] = []
         for ch in chapters:
+            # I filename dei capitoli sono già unici (``chap_NNNN.xhtml``,
+            # ``cover.xhtml``), quindi qui la collisione non avviene; il
+            # prefisso evita comunque sovrapposizioni con le immagini.
+            # Rimuoviamo un eventuale prefisso ``chap_`` dallo stem per evitare
+            # ID ``chap_chap_0001``.
+            stem = Path(ch.filename).stem.removeprefix("chap_")
+            item_id = _unique_id(f"chap_{stem}")
             manifest_items.append(
-                f'<item id="{Path(ch.filename).stem}" href="{ch.filename}" '
+                f'<item id="{item_id}" href="{ch.filename}" '
                 f'media-type="application/xhtml+xml"/>'
             )
+            spine_items.append(f'<itemref idref="{item_id}"/>')
         for img_file in images_dir.iterdir():
-            mt = "image/webp" if img_file.suffix == ".webp" else f"image/{img_file.suffix.lstrip('.')}"
+            mt = _IMAGE_MIME.get(img_file.suffix.lower(), "application/octet-stream")
+            # Prefisso "img_" + deduplicazione (fig.jpg e fig.png collidono).
+            item_id = _unique_id(f"img_{img_file.stem}")
             manifest_items.append(
-                f'<item id="{img_file.stem}" href="images/{img_file.name}" media-type="{mt}"/>'
+                f'<item id="{item_id}" href="images/{img_file.name}" media-type="{mt}"/>'
             )
 
-        spine_items = "\n    ".join(
-            f'<itemref idref="{Path(ch.filename).stem}"/>' for ch in chapters
-        )
+        spine_items_str = "\n    ".join(spine_items)
 
         opf = f"""<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
@@ -462,7 +498,7 @@ def build_epub(
     {chr(10).join(manifest_items)}
   </manifest>
   <spine>
-    {spine_items}
+    {spine_items_str}
   </spine>
 </package>"""
         (oebps / "content.opf").write_text(opf, encoding="utf-8")

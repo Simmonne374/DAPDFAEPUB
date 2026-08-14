@@ -173,6 +173,67 @@ def test_book_metadata_chapter_pages_field() -> None:
     assert m_default.chapter_pages is None
 
 
+def test_build_epub_manifest_has_unique_ids(tmp_path: Path, sample_image: Path) -> None:
+    """Regression: il manifest OPF non deve contenere ``id`` duplicati.
+
+    Bug riprodotto: quando si fornisce una ``cover_image``, sia
+    ``cover.xhtml`` (capitolo cover) che ``images/cover.webp`` (risorsa
+    immagine della cover) usano lo stesso ``id="cover"`` nel manifest.
+    Lo standard OPF richiede ID univoci; gli e-reader e gli EpubCheck
+    rifiutano il file.
+
+    Secondo caso coperto: due immagini con stesso stem ma estensioni
+    diverse (es. ``fig.jpg`` e ``fig.png``) collidono entrambe su
+    ``img_fig`` se non deduplicate.
+    """
+    from PIL import Image
+    second = tmp_path / "sample.jpg"
+    Image.new("RGB", (50, 50), (0, 255, 0)).save(second, format="JPEG")
+    out = tmp_path / "book.epub"
+    build_epub(
+        markdown="# Cap 1\n\nTesto.\n\n# Cap 2\n\nAltro testo.",
+        images=[sample_image, second],
+        metadata=BookMetadata(title="Test"),
+        output_path=out,
+        cover_image=sample_image,
+    )
+    with zipfile.ZipFile(out) as zf:
+        opf = zf.read("OEBPS/content.opf").decode("utf-8")
+    # Estrai tutti gli ``id="..."`` dalla sezione manifest
+    import re
+    ids = re.findall(r'<item\s+id="([^"]+)"', opf)
+    duplicates = [i for i in set(ids) if ids.count(i) > 1]
+    assert not duplicates, f"ID duplicati nel manifest OPF: {duplicates}"
+
+
+def test_build_epub_manifest_jpeg_mime_type(tmp_path: Path) -> None:
+    """Regression: ``.jpg`` deve essere dichiarato come ``image/jpeg`` nel manifest.
+
+    Bug: ``build_epub`` costruisce il MIME type con ``image/{suffix.lstrip('.')}``,
+    che produce ``image/jpg`` per i file ``.jpg``. EPUB validators rifiutano
+    MIME non-standard. Il MIME corretto per JPEG è ``image/jpeg``.
+    """
+    from PIL import Image
+    jpg_path = tmp_path / "picture.jpg"
+    Image.new("RGB", (50, 50), (255, 0, 0)).save(jpg_path, format="JPEG")
+
+    out = tmp_path / "book.epub"
+    build_epub(
+        markdown="# Test\n\nFoto.",
+        images=[jpg_path],
+        metadata=BookMetadata(title="Test"),
+        output_path=out,
+    )
+    with zipfile.ZipFile(out) as zf:
+        opf = zf.read("OEBPS/content.opf").decode("utf-8")
+    assert 'media-type="image/jpeg"' in opf, (
+        f"MIME type atteso 'image/jpeg', trovato altro:\n{opf}"
+    )
+    assert 'media-type="image/jpg"' not in opf, (
+        "MIME type non-standard 'image/jpg' trovato nel manifest."
+    )
+
+
 def test_build_epub_uses_h1_chapter_titles_in_toc(tmp_path: Path) -> None:
     """Gli H1 del markdown devono comparire come titoli nel TOC del EPUB."""
     md = (
