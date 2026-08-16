@@ -30,10 +30,8 @@ pytestmark = pytest.mark.skipif(
     reason="pandoc non installato (richiesto per pypandoc)",
 )
 
-
 def test_check_pandoc_returns_true_when_installed() -> None:
     assert isinstance(_check_pandoc(), str)
-
 
 def test_build_epub_minimal(tmp_path: Path) -> None:
     """Un EPUB minimale con testo solo markdown deve essere valido."""
@@ -57,7 +55,6 @@ def test_build_epub_minimal(tmp_path: Path) -> None:
             n.endswith(".html") for n in names
         )
 
-
 def test_build_epub_with_cover(tmp_path: Path, sample_image: Path) -> None:
     """Il path del cover deve essere incluso come immagine di copertina."""
     out = tmp_path / "book.epub"
@@ -70,14 +67,12 @@ def test_build_epub_with_cover(tmp_path: Path, sample_image: Path) -> None:
     )
     assert out.is_file()
 
-
 def test_book_metadata_defaults() -> None:
     """I default di BookMetadata devono essere sensati."""
     m = BookMetadata(title="T")
     assert m.language == "it"
     assert m.identifier  # non vuoto
     assert m.title == "T"
-
 
 def test_chapter_info_dataclass() -> None:
     ch = ChapterInfo(title="Cap 1", level=1, filename="chap_0001.xhtml", xhtml="xhtml_content")
@@ -86,13 +81,11 @@ def test_chapter_info_dataclass() -> None:
     assert ch.filename == "chap_0001.xhtml"
     assert ch.xhtml == "xhtml_content"
 
-
 # ----------------------------------------------------------------------
 # Adaptive chapter splitting (Item 3)
 # ----------------------------------------------------------------------
 
 from relictoepub.compile.build_epub import _split_into_chapters
-
 
 def _make_md(n_h1: int = 0, n_h2: int = 0, n_pages: int = 0) -> str:
     """Costruisce un markdown sintetico con N H1 + N H2 + N pagebreaks."""
@@ -105,14 +98,12 @@ def _make_md(n_h1: int = 0, n_h2: int = 0, n_pages: int = 0) -> str:
         parts.append(f"Contenuto pagina {i + 1}.\n\n<!-- pagebreak -->\n\n")
     return "".join(parts)
 
-
 def test_chapter_split_adaptive_uses_h1() -> None:
     """Con ≥3 H1 lo splitter deve usare gli H1 come confini di capitolo."""
     md = _make_md(n_h1=4)
     chapters = _split_into_chapters(md)
     titles = [c["title"] for c in chapters]
     assert titles[:4] == ["Capitolo 1", "Capitolo 2", "Capitolo 3", "Capitolo 4"]
-
 
 def test_chapter_split_adaptive_falls_back_to_h2() -> None:
     """Senza H1 ma con ≥3 H2 → usa gli H2."""
@@ -121,7 +112,6 @@ def test_chapter_split_adaptive_falls_back_to_h2() -> None:
     titles = [c["title"] for c in chapters]
     assert titles == [f"Sezione {i + 1}" for i in range(8)]
 
-
 def test_chapter_split_single_chapter_when_no_headings() -> None:
     """Senza heading → singolo capitolo con tutto il testo."""
     md = "Solo testo piano senza nessun heading.\n\nAncora testo."
@@ -129,7 +119,6 @@ def test_chapter_split_single_chapter_when_no_headings() -> None:
     assert len(chapters) == 1
     assert chapters[0]["title"] == ""
     assert "Solo testo piano" in chapters[0]["body"]
-
 
 def test_chapter_split_page_grouping() -> None:
     """Con ``chapter_pages=3`` e 9 pagebreaks → 3 capitoli."""
@@ -142,7 +131,6 @@ def test_chapter_split_page_grouping() -> None:
         "Pagine 7-9",
     ]
 
-
 def test_chapter_split_prefers_h1_over_page_grouping() -> None:
     """H1 batte page-grouping anche se chapter_pages è settato."""
     md = _make_md(n_h1=5, n_pages=10)
@@ -150,19 +138,16 @@ def test_chapter_split_prefers_h1_over_page_grouping() -> None:
     titles = [c["title"] for c in chapters]
     assert titles[:5] == [f"Capitolo {i + 1}" for i in range(5)]
 
-
 def test_chapter_split_legacy_pagebreaks_when_no_headings() -> None:
     """Senza heading né ``chapter_pages`` → fallback page-per-chapter."""
     md = _make_md(n_pages=5)
     chapters = _split_into_chapters(md)
     assert len(chapters) == 5
 
-
 def test_chapter_split_empty_input() -> None:
     """Input vuoto → lista vuota (nessun capitolo)."""
     assert _split_into_chapters("") == []
     assert _split_into_chapters("   \n\n  ") == []
-
 
 def test_book_metadata_chapter_pages_field() -> None:
     """``BookMetadata`` deve esporre ``chapter_pages`` come campo opzionale."""
@@ -170,7 +155,6 @@ def test_book_metadata_chapter_pages_field() -> None:
     assert m.chapter_pages == 10
     m_default = BookMetadata(title="T")
     assert m_default.chapter_pages is None
-
 
 def test_build_epub_manifest_has_unique_ids(tmp_path: Path, sample_image: Path) -> None:
     """Regression: il manifest OPF non deve contenere ``id`` duplicati.
@@ -204,7 +188,6 @@ def test_build_epub_manifest_has_unique_ids(tmp_path: Path, sample_image: Path) 
     duplicates = [i for i in set(ids) if ids.count(i) > 1]
     assert not duplicates, f"ID duplicati nel manifest OPF: {duplicates}"
 
-
 def test_build_epub_manifest_jpeg_mime_type(tmp_path: Path) -> None:
     """Regression: ``.jpg`` deve essere dichiarato come ``image/jpeg`` nel manifest.
 
@@ -232,7 +215,6 @@ def test_build_epub_manifest_jpeg_mime_type(tmp_path: Path) -> None:
         "MIME type non-standard 'image/jpg' trovato nel manifest."
     )
 
-
 def test_build_epub_uses_h1_chapter_titles_in_toc(tmp_path: Path) -> None:
     """Gli H1 del markdown devono comparire come titoli nel TOC del EPUB."""
     md = (
@@ -256,7 +238,6 @@ def test_build_epub_uses_h1_chapter_titles_in_toc(tmp_path: Path) -> None:
     assert "Capitolo Beta" in nav
     assert "Epilogo" in nav
 
-
 # ----------------------------------------------------------------------
 # EPUB3 structure regression tests (round 2 bug-hunt fixes)
 # B37: ogni capitolo NON deve contenere DOCTYPE annidato / <html>/<body>
@@ -265,7 +246,6 @@ def test_build_epub_uses_h1_chapter_titles_in_toc(tmp_path: Path) -> None:
 # ----------------------------------------------------------------------
 
 import re
-
 
 def test_chapter_xhtml_has_no_nested_doctype(tmp_path: Path) -> None:
     """B37: ogni .xhtml capitolo deve essere un frammento EPUB3 valido,
@@ -291,7 +271,6 @@ def test_chapter_xhtml_has_no_nested_doctype(tmp_path: Path) -> None:
                 f"{ch}: trovati {html_count} <html> (atteso 1). "
                 f"BUG B37: frammento non riusabile come XHTML EPUB3."
             )
-
 
 def test_dcterms_modified_is_dynamic(tmp_path: Path) -> None:
     """B41: dcterms:modified non deve essere hardcoded — cambia ad ogni build.
@@ -330,7 +309,6 @@ def test_dcterms_modified_is_dynamic(tmp_path: Path) -> None:
         f"dcterms:modified troppo lontano da ora: {modified!r} vs now={now.isoformat()}"
     )
 
-
 def test_build_epub_empty_markdown_fallback(tmp_path: Path) -> None:
     """B40: con markdown vuoto/whitespace, build_epub deve produrre
     almeno un capitolo (fallback 'Empty') invece di EPUB vuoto."""
@@ -349,7 +327,6 @@ def test_build_epub_empty_markdown_fallback(tmp_path: Path) -> None:
             f"BUG B40: EPUB senza capitoli (file trovati: {names})"
         )
 
-
 def test_build_epub_zip_includes_required_opf(tmp_path: Path) -> None:
     """Sanity check struttura EPUB3 minima: mimype + container.xml + content.opf + nav.xhtml."""
     md = "# X\n\nT."
@@ -365,7 +342,6 @@ def test_build_epub_zip_includes_required_opf(tmp_path: Path) -> None:
         assert names[0] == "mimetype"
         # mimetype content
         assert zf.read("mimetype") == b"application/epub+zip"
-
 
 # ----------------------------------------------------------------------
 # B47: quantization_choices caching
@@ -387,7 +363,6 @@ def test_quantization_choices_is_cached() -> None:
     assert len(c1) >= 1
     assert d2 in [c[-1] if isinstance(c, tuple) else c for c in c1] if isinstance(c1[0], tuple) else (d2 in c1)
 
-
 # ----------------------------------------------------------------------
 # B31: ingest.py chiude correttamente gli handle PIL Image
 # ----------------------------------------------------------------------
@@ -407,7 +382,6 @@ def test_ingest_render_pdf_closes_pil_handles(tmp_path: Path) -> None:
         "BUG B31: render_pdf() non usa context manager per Image.open(). "
         "Possibile memory leak su PDF di molte pagine."
     )
-
 
 # ----------------------------------------------------------------------
 # B32/B50/B51: pattern regex hoisted (compilati una sola volta)
@@ -429,7 +403,6 @@ def test_pipeline_uses_hoisted_regex_patterns() -> None:
     assert isinstance(p._LAYOUT_TAG_RE, re.Pattern)
     assert isinstance(p._EMPTY_LAYOUT_RE, re.Pattern)
 
-
 # ----------------------------------------------------------------------
 # B36: _check_pandoc caching
 # ----------------------------------------------------------------------
@@ -447,3 +420,46 @@ def test_check_pandoc_is_cached() -> None:
     p2 = _check_pandoc()
     assert p1 == p2
     assert p2 == _pandoc_path_cache
+
+# ----------------------------------------------------------------------
+# B48: advanced_options() istanzia il Dropdown quantizzazione con cache None
+# ----------------------------------------------------------------------
+
+def test_advanced_options_quantization_dropdown_is_populated() -> None:
+    """B48: la cache globale ``_q_choices`` / ``_q_default`` deve essere
+    inizializzata PRIMA che ``advanced_options()`` costruisca il Dropdown.
+
+    Riproduce un bug in cui ``advanced_options()`` legge le variabili globali
+    ``_q_choices``/``_q_default`` mentre sono ancora ``None`` (l'inizializzazione
+    lazy in ``quantization_choices()`` non viene mai triggerata dall'app UI),
+    producendo un Dropdown vuoto (``choices=[]``, ``value=None``) che impedisce
+    all'utente di selezionare la quantizzazione.
+    """
+    import relictoepub.ui.components as components
+
+    # Simula fresh import: azzera la cache globale del modulo.
+    components._q_choices = None
+    components._q_default = None
+
+    # Sanity check: senza invocare ``quantization_choices()``, le globali
+    # restano ``None``. Questo è esattamente lo scenario che si verifica
+    # nella vita reale: ``advanced_options()`` viene chiamato da ``build_demo()``
+    # senza che nessuno abbia chiamato ``quantization_choices()`` prima.
+    assert components._q_choices is None
+    assert components._q_default is None
+
+    # Adesso costruisci le opzioni come farebbe ``build_demo()``.
+    opts = components.advanced_options()
+    qd = opts["quantization"]
+
+    # ASSEGNazione attesa dopo il fix: il Dropdown deve avere almeno una
+    # scelta e un valore di default valido (uno delle stringhe delle scelte).
+    assert qd.choices, "BUG B48: Dropdown quantizzazione senza scelte (choices vuote)"
+    assert qd.value is not None, "BUG B48: Dropdown quantizzazione senza valore di default"
+    # Il default deve essere presente nelle scelte (controllo sul valore finale).
+    flat_choices = [
+        c[-1] if isinstance(c, tuple) else c for c in qd.choices
+    ]
+    assert qd.value in flat_choices, (
+        f"BUG B48: default {qd.value!r} non presente nelle scelte {qd.choices!r}"
+    )

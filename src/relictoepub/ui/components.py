@@ -121,10 +121,11 @@ def advanced_options() -> dict[str, gr.components.Component]:
             info="300 DPI è il sweet-spot qualità/performance",
         ),
         "quantization": gr.Dropdown(
+            # B48: inizializza lazy la cache _q_choices/_q_default (prima
+            # venivano letti quando ancora None → Dropdown vuoto).
             # B47: una sola chiamata a quantization_choices() (evita
             # doppio import torch/bitsandbytes ad ogni render UI)
-            choices=_q_choices,
-            value=_q_default,
+            *quantization_choices(),
             label="Quantizzazione del modello",
         ),
         "eink_optimize": gr.Checkbox(
