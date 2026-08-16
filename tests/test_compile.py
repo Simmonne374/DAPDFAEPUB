@@ -6,6 +6,7 @@ Se non disponibili, i test vengono skippati esplicitamente.
 
 from __future__ import annotations
 
+import re
 import zipfile
 from pathlib import Path
 
@@ -15,8 +16,10 @@ from relictoepub.compile.build_epub import (
     BookMetadata,
     ChapterInfo,
     _check_pandoc,
+    _split_into_chapters,
     build_epub,
 )
+from relictoepub.ui import components
 
 # Skip automatico se pandoc non è installato
 try:
@@ -85,7 +88,6 @@ def test_chapter_info_dataclass() -> None:
 # Adaptive chapter splitting (Item 3)
 # ----------------------------------------------------------------------
 
-from relictoepub.compile.build_epub import _split_into_chapters
 
 def _make_md(n_h1: int = 0, n_h2: int = 0, n_pages: int = 0) -> str:
     """Costruisce un markdown sintetico con N H1 + N H2 + N pagebreaks."""
@@ -245,7 +247,6 @@ def test_build_epub_uses_h1_chapter_titles_in_toc(tmp_path: Path) -> None:
 # B40: markdown vuoto non deve produrre EPUB senza capitoli
 # ----------------------------------------------------------------------
 
-import re
 
 def test_chapter_xhtml_has_no_nested_doctype(tmp_path: Path) -> None:
     """B37: ogni .xhtml capitolo deve essere un frammento EPUB3 valido,
@@ -278,8 +279,6 @@ def test_dcterms_modified_is_dynamic(tmp_path: Path) -> None:
     Verifica che il timestamp sia (a) un valore ISO 8601 valido recente,
     e (b) NON sia la stringa hardcoded ``2026-07-06`` che era il bug originale.
     """
-    import re as _re
-
     md = "# Cap\n\nTesto."
     out = tmp_path / "book.epub"
     build_epub(markdown=md, images=[], metadata=BookMetadata(title="T"), output_path=out)
@@ -287,7 +286,7 @@ def test_dcterms_modified_is_dynamic(tmp_path: Path) -> None:
         opf = zf.read("OEBPS/content.opf").decode("utf-8")
 
     # Estrai il valore di dcterms:modified
-    match = _re.search(r'<meta property="dcterms:modified">([^<]+)</meta>', opf)
+    match = re.search(r'<meta property="dcterms:modified">([^<]+)</meta>', opf)
     assert match, "dcterms:modified non trovato in content.opf"
     modified = match.group(1)
 
@@ -296,7 +295,7 @@ def test_dcterms_modified_is_dynamic(tmp_path: Path) -> None:
         f"BUG B41: dcterms:modified è hardcoded a {modified!r}"
     )
     # Deve essere un timestamp ISO 8601 valido (YYYY-MM-DDTHH:MM:SSZ)
-    assert _re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", modified), (
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", modified), (
         f"Formato dcterms:modified inatteso: {modified!r}"
     )
     # Deve essere "recente" (entro 1h dalla generazione) — questo conferma
@@ -435,8 +434,6 @@ def test_advanced_options_quantization_dropdown_is_populated() -> None:
     producendo un Dropdown vuoto (``choices=[]``, ``value=None``) che impedisce
     all'utente di selezionare la quantizzazione.
     """
-    import relictoepub.ui.components as components
-
     # Simula fresh import: azzera la cache globale del modulo.
     components._q_choices = None
     components._q_default = None
