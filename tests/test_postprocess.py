@@ -187,6 +187,25 @@ def test_clean_text_hyphenation() -> None:
     assert "paragraphia" in cleaned
 
 
+def test_clean_text_B_52_unicode_soft_hyphen() -> None:
+    """B52: ``clean_text`` deve gestire il vero Unicode SOFT HYPHEN (U+00AD).
+
+    Il modello OCR può occasionalmente emettere ``\\u00AD`` invece del
+    trattino ASCII come marker di sillabazione. La docstring di
+    ``clean_text`` dichiara "soft-hyphen de-hyphenation" ma il pattern
+    interno matchava solo ``-``: il testo arrivava all'EPUB con un
+    carattere invisibile capace di spezzare il rendering su alcuni
+    e-Reader.
+    """
+    raw = "para\u00AD\ngraphia finale"
+    cleaned = clean_text(raw)
+    assert "\u00AD" not in cleaned, (
+        f"BUG B52: U+00AD non rimosso da clean_text: {cleaned!r}"
+    )
+    # La sillabazione deve essere collassata come per l'ASCII '-'.
+    assert "paragraphia" in cleaned
+
+
 def test_clean_text_quotes_normalization() -> None:
     raw = "‘ciao’ “mondo” «ciao»"
     cleaned = clean_text(raw, fix_hyphenation=False)

@@ -23,8 +23,10 @@ import re
 logger = logging.getLogger(__name__)
 
 
-# Trattino di fine riga seguito da a-capo: "soft hyphen" → da unire
-_END_OF_LINE_HYPHEN = re.compile(r"-\s*\n\s*")
+# Trattino di fine riga seguito da a-capo: "soft hyphen" → da unire.
+# Match sia il trattino ASCII che lo Unicode SOFT HYPHEN (U+00AD) che il
+# modello OCR può occasionalmente emettere al posto del "-" ASCII.
+_END_OF_LINE_HYPHEN = re.compile(r"[-\u00AD]\s*\n\s*")
 
 # Apostrofi tipografici → ASCII (gli e-Reader come Kindle base non li gestiscono)
 _TYPOGRAPHIC_QUOTES = re.compile(r"[‘’`´]")  # solo la serie "left-single + backtick"
