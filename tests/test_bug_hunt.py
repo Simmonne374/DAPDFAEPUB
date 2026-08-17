@@ -37,8 +37,9 @@ def test_unique_manifest_ids_with_colliding_stems(tmp_path: Path) -> None:
     Image.new("RGB", (50, 50), (0, 0, 0)).save(a)
     Image.new("RGB", (50, 50), (255, 255, 255)).save(b, format="JPEG")
 
-    from relictoepub.compile.build_epub import BookMetadata, build_epub
     import zipfile
+
+    from relictoepub.compile.build_epub import BookMetadata, build_epub
     out = tmp_path / "book.epub"
     build_epub(
         markdown="# T\n\nX.",
