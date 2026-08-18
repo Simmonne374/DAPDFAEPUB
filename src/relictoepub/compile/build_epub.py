@@ -279,22 +279,66 @@ def _xml_escape(text: str) -> str:
 def _inject_responsive_images(html: str) -> str:
     """Aggiunge ``max-width:100%; height:auto`` a tutti i ``<img>`` emessi in modo XML-compliant.
 
-    Idempotente — se lo stile è già presente non lo duplica.
+    Idempotente — se lo stile è già presente non lo duplica né produce
+    un secondo attributo ``style=`` (XHTML strict vieta attributi duplicati
+    e gli EpubCheck rifiutano l'EPUB in quel caso).
     """
     pattern = re.compile(r"<img([^>]*?)(/?)>")
+    style_attr_re = re.compile(r"""style\s*=\s*("([^"]*)"|'([^']*)')""")
+
+    # Regole responsive da garantire su ogni <img>.
+    _RESPONSIVE_RULES = ("max-width:100%", "height:auto", "display:block", "margin:1em auto")
+
+    def _ensure_responsive_css(existing: str) -> str:
+        """Ritorna la stringa di dichiarazioni CSS garantendo le regole responsive.
+
+        - Rispetta l'ordine delle regole già presenti.
+        - Aggiunge in coda solo le regole mancanti (idempotente sulle singole regole).
+        - Non tocca regole definite dall'utente (es. ``width:50.0%`` viene preservata).
+        """
+        # Split per ``;`` rimuovendo voci vuote; teniamo l'ordine originale.
+        existing_rules = [r.strip() for r in existing.split(";") if r.strip()]
+        existing_lower = {r.lower() for r in existing_rules}
+        merged = list(existing_rules)
+        for rule in _RESPONSIVE_RULES:
+            if rule.lower() not in existing_lower:
+                merged.append(rule)
+        return "; ".join(merged)
+
     def repl(m):
         attrs = m.group(1).rstrip()
         is_self_closing = m.group(2) or "/"
-        
-        if "max-width:100%" in attrs:
-            return m.group(0)
-            
+
+        # Normalizza ``<img ... />`` (self-closing inline senza spazio prima di /).
         if attrs.endswith("/"):
             attrs = attrs[:-1].rstrip()
             is_self_closing = "/"
-            
-        return f'<img {attrs} style="max-width:100%; height:auto; display:block; margin:1em auto;" {is_self_closing}>'
-        
+
+        # Se è già presente un attributo ``style="..."`` fondiamolo
+        # con le regole responsive (preservando quelle dell'utente).
+        # Altrimenti aggiungiamo un nuovo ``style="..."``.
+        style_match = style_attr_re.search(attrs)
+        if style_match is not None:
+            existing_css = style_match.group(2) or style_match.group(3) or ""
+            new_css = _ensure_responsive_css(existing_css)
+            if new_css == existing_css:
+                # Già completo e idempotente: restituiamo il tag originale
+                # invariato (XHTML-safe, nessuna modifica).
+                return m.group(0)
+            attrs = (
+                attrs[: style_match.start()]
+                + f'style="{new_css}"'
+                + attrs[style_match.end():]
+            )
+        else:
+            # Nessuno style pre-esistente: aggiungiamone uno completo.
+            attrs = f'{attrs} style="{"; ".join(_RESPONSIVE_RULES)}"'
+
+        # Costruisci il tag finale, evitando spazi doppi quando ``attrs`` è vuoto.
+        if attrs:
+            return f"<img {attrs} {is_self_closing}>"
+        return f"<img {is_self_closing}>"
+
     return pattern.sub(repl, html)
 
 
