@@ -84,6 +84,122 @@ def test_chapter_info_dataclass() -> None:
     assert ch.filename == "chap_0001.xhtml"
     assert ch.xhtml == "xhtml_content"
 
+
+# ----------------------------------------------------------------------
+# B53: _inject_responsive_images duplica l'attributo `style=` quando
+# pandoc ha già emesso un ``<img style="..." />`` (es. con width esplicito
+# dall'utente). Lo standard XHTML strict (e quindi EPUB3) proibisce
+# attributi duplicati sullo stesso elemento → EpubCheck rifiuta il libro.
+# ----------------------------------------------------------------------
+
+
+def test_inject_responsive_images_merges_existing_style() -> None:
+    """B53 (unit): un ``<img style="...">`` pre-esistente non deve generare
+    un SECONDO attributo ``style=`` (XHTML invalido).
+
+    L'iniezione deve **fondere** le regole CSS dentro lo ``style`` esistente
+    oppure non aggiungerne uno nuovo se le regole chiave (``max-width:100%``,
+    ``height:auto``) sono già presenti.
+
+    Riproduce il bug: con input ``<img src="x.png" style="width:50.0%" />``
+    (ciò che pandoc emette per ``![](x.png){width="50%"}``) l'output del
+    modulo produceva:
+
+        <img  src="x.png" style="width:50.0%" style="max-width:100%; height:auto; ..." />
+
+    con DUE attributi ``style`` (XHTML non valido).
+    """
+    from relictoepub.compile.build_epub import _inject_responsive_images
+
+    # Caso 1: <img> con style pre-esistente (ciò che pandoc genera).
+    html_in = '<img src="x.png" style="width:50.0%" />'
+    out = _inject_responsive_images(html_in)
+
+    # Non devono esserci due attributi style= sullo stesso <img>.
+    img_tags = re.findall(r"<img[^>]*>", out)
+    assert img_tags, "Nessun <img> trovato nell'output"
+    for tag in img_tags:
+        style_count = len(re.findall(r'\bstyle="', tag))
+        assert style_count <= 1, (
+            f"BUG B53: trovati {style_count} attributi style= in {tag!r} "
+            f"(XHTML invalido, EpubCheck rifiuta)"
+        )
+
+    # Lo style presente deve comunque contenere le regole chiave responsive.
+    assert "max-width:100%" in out, (
+        f"BUG B53: max-width:100% mancante dopo l'iniezione: {out!r}"
+    )
+    assert "height:auto" in out, (
+        f"BUG B53: height:auto mancante dopo l'iniezione: {out!r}"
+    )
+
+    # Caso 2: <img> senza style pre-esistente → viene comunque aggiunto
+    # (comportamento esistente da preservare).
+    out2 = _inject_responsive_images('<img src="y.png" />')
+    img_tags2 = re.findall(r"<img[^>]*>", out2)
+    assert img_tags2
+    assert len(re.findall(r'\bstyle="', img_tags2[0])) == 1
+    assert "max-width:100%" in img_tags2[0]
+
+    # Caso 3: idempotenza — se max-width:100% è già nello style, non
+    # deve essere duplicato/aggiunto due volte.
+    out3 = _inject_responsive_images(
+        '<img src="z.png" style="max-width:100%; height:auto;" />'
+    )
+    img_tags3 = re.findall(r"<img[^>]*>", out3)
+    assert img_tags3
+    tag3 = img_tags3[0]
+    assert len(re.findall(r'\bstyle="', tag3)) == 1, (
+        f"BUG B53: doppio style= anche se già responsive: {tag3!r}"
+    )
+    # max-width:100% compare UNA sola volta (nessuna duplicazione).
+    assert tag3.count("max-width:100%") == 1, (
+        f"BUG B53: max-width:100% duplicato in {tag3!r}"
+    )
+
+
+def test_build_epub_image_with_width_no_duplicate_style_attr(
+    tmp_path: Path, sample_image: Path,
+) -> None:
+    """B53 (e2e): un EPUB con immagine e ``width=\"50%\"`` non deve avere
+    due attributi ``style=`` in nessun ``<img>`` dei capitoli XHTML.
+
+    Verifica il percorso completo: markdown → pandoc → _inject_responsive_images
+    → file XHTML finale nel pacchetto EPUB.
+    """
+    md = (
+        "# Capitolo 1\n\n"
+        "Testo prima dell'immagine.\n\n"
+        f'![]({sample_image.name}){{width="50%"}}\n\n'
+        "Testo dopo l'immagine.\n\n"
+        "# Capitolo 2\n\n"
+        "Ancora testo.\n\n"
+        "# Capitolo 3\n\n"
+        "Fine.\n"
+    )
+    out = tmp_path / "book.epub"
+    build_epub(
+        markdown=md,
+        images=[sample_image],
+        metadata=BookMetadata(title="Test", author="A"),
+        output_path=out,
+    )
+    assert out.is_file()
+    with zipfile.ZipFile(out) as zf:
+        chapter_files = [
+            n for n in zf.namelist()
+            if n.startswith("OEBPS/chap_") and n.endswith(".xhtml")
+        ]
+        assert chapter_files, "Nessun capitolo generato"
+        for ch_name in chapter_files:
+            content = zf.read(ch_name).decode("utf-8")
+            for tag in re.findall(r"<img[^>]*>", content):
+                style_count = len(re.findall(r'\bstyle="', tag))
+                assert style_count <= 1, (
+                    f"BUG B53: in {ch_name} trovati {style_count} attributi "
+                    f"style= in {tag!r} (XHTML invalido)"
+                )
+
 # ----------------------------------------------------------------------
 # Adaptive chapter splitting (Item 3)
 # ----------------------------------------------------------------------
