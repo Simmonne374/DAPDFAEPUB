@@ -200,6 +200,101 @@ def test_build_epub_image_with_width_no_duplicate_style_attr(
                     f"style= in {tag!r} (XHTML invalido)"
                 )
 
+
+# ----------------------------------------------------------------------
+# B54: _inject_responsive_images produce uno spazio doppio prima di
+# ``attrs`` perché la regex ``<img([^>]*?)(/?)>`` cattura lo spazio iniziale
+# di group(1) e poi l'f-string aggiunge un altro spazio. Pandoc emette
+# sempre ``<img ... />`` con spazio prima di ``/>``, quindi ogni immagine
+# processata presenta ``<img  src=...`` (doppio spazio).
+# ----------------------------------------------------------------------
+
+
+def test_inject_responsive_images_no_double_space() -> None:
+    """B54 (unit): ``_inject_responsive_images`` non deve produrre spazi
+    doppi tra ``<img`` e il primo attributo.
+
+    Bug: il regex ``<img([^>]*?)(/?)>`` cattura il gruppo ``attrs`` con
+    uno spazio iniziale (pandoc emette sempre ``<img ... />`` con spazio
+    prima di ``/>``); l'f-string ``<img {attrs} {is_self_closing}>``
+    aggiunge poi un altro spazio, generando ``<img  src=...`` (doppio).
+
+    Casi coperti (tutti provenienti dall'output reale di pandoc):
+    - ``<img src="x.png" />`` (pandoc standard, con width esplicito)
+    - ``<img src="x.png" style="..." />`` (pandoc con style pre-esistente)
+    - ``<img src="x.png" alt="x" />`` (pandoc con alt)
+    """
+    from relictoepub.compile.build_epub import _inject_responsive_images
+
+    cases = [
+        '<img src="x.png" />',
+        '<img src="x.png" alt="x" />',
+        '<img src="x.png" style="width:50.0%" />',
+        '<img src="x.png" alt="x" style="width:50.0%" />',
+        '<img src="x.png" style="max-width:100%; height:auto;" />',
+    ]
+    for src in cases:
+        out = _inject_responsive_images(src)
+        img_tags = re.findall(r"<img[^>]*>", out)
+        assert img_tags, f"Nessun <img> nell'output per {src!r}"
+        tag = img_tags[0]
+        # Deve esserci UN solo spazio tra ``<img`` e il primo attributo.
+        assert not tag.startswith("<img  "), (
+            f"BUG B54: spazio doppio dopo <img in {tag!r} "
+            f"(input era {src!r})"
+        )
+        # Verifica più rigorosa: nessuna sequenza di due o più spazi
+        # consecutivi nel tag (gli attributi sono separati da un solo spazio).
+        assert "  " not in tag[len("<img"):].split(">")[0], (
+            f"BUG B54: trovata sequenza di due spazi in {tag!r} "
+            f"(input era {src!r})"
+        )
+
+
+def test_build_epub_images_have_no_double_space(
+    tmp_path: Path, sample_image: Path,
+) -> None:
+    """B54 (e2e): gli ``<img>`` nei capitoli XHTML dell'EPUB finale non devono
+    avere spazi doppi dopo ``<img``.
+
+    Pipeline completa: markdown → pandoc → ``_inject_responsive_images``
+    → file XHTML nel pacchetto EPUB. Questo è il caso reale che l'utente
+    vede: ogni ``<img>`` emesso da pandoc per il libro deve essere ben
+    formattato (un solo spazio tra ``<img`` e gli attributi).
+    """
+    md = (
+        "# Capitolo 1\n\n"
+        "Testo prima dell'immagine.\n\n"
+        f'![]({sample_image.name}){{width="50%"}}\n\n'
+        "Testo dopo l'immagine.\n\n"
+        "# Capitolo 2\n\n"
+        "Ancora testo.\n\n"
+        "# Capitolo 3\n\n"
+        f'![]({sample_image.name})\n\n'
+        "Fine.\n"
+    )
+    out = tmp_path / "book.epub"
+    build_epub(
+        markdown=md,
+        images=[sample_image],
+        metadata=BookMetadata(title="Test", author="A"),
+        output_path=out,
+    )
+    assert out.is_file()
+    with zipfile.ZipFile(out) as zf:
+        chapter_files = [
+            n for n in zf.namelist()
+            if n.startswith("OEBPS/chap_") and n.endswith(".xhtml")
+        ]
+        assert chapter_files, "Nessun capitolo generato"
+        for ch_name in chapter_files:
+            content = zf.read(ch_name).decode("utf-8")
+            for tag in re.findall(r"<img[^>]*>", content):
+                # Nessun <img  ... con doppio spazio
+                assert not tag.startswith("<img  "), (
+                    f"BUG B54: doppio spazio dopo <img in {ch_name}: {tag!r}"
+                )
+
 # ----------------------------------------------------------------------
 # Adaptive chapter splitting (Item 3)
 # ----------------------------------------------------------------------

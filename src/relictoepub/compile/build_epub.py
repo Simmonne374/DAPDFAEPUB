@@ -306,7 +306,12 @@ def _inject_responsive_images(html: str) -> str:
         return "; ".join(merged)
 
     def repl(m):
-        attrs = m.group(1).rstrip()
+        # ``strip()`` rimuove gli spazi leading/trailing lasciati dal
+        # match ``<img[^>]*?>`` (pandoc emette sempre ``<img ... />`` con
+        # spazio prima di ``/>``). Senza questo strip, l'f-string
+        # ``f"<img {attrs} {is_self_closing}>"`` produrrebbe ``<img  ...``
+        # con doppio spazio (BUG B54).
+        attrs = m.group(1).strip()
         is_self_closing = m.group(2) or "/"
 
         # Normalizza ``<img ... />`` (self-closing inline senza spazio prima di /).
@@ -332,7 +337,10 @@ def _inject_responsive_images(html: str) -> str:
             )
         else:
             # Nessuno style pre-esistente: aggiungiamone uno completo.
-            attrs = f'{attrs} style="{"; ".join(_RESPONSIVE_RULES)}"'
+            # Gestisce il caso ``attrs`` vuoto (``<img/>`` / ``<img />``)
+            # evitando lo spazio extra prima di ``style=``.
+            new_style = f'style="{"; ".join(_RESPONSIVE_RULES)}"'
+            attrs = f"{attrs} {new_style}".strip()
 
         # Costruisci il tag finale, evitando spazi doppi quando ``attrs`` è vuoto.
         if attrs:
