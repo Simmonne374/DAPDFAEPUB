@@ -65,13 +65,19 @@ class BBox:
 
         Args:
             page_width_px: larghezza della pagina in pixel (es. immagine 300 DPI).
+                Conservato per retro-compatibilità della firma; un valore non
+                positivo fa ritornare ``0.0``. Non influenza il calcolo della
+                percentuale (che dipende solo dalla scala normalizzata).
 
         Returns:
             Percentuale 0–100. ``0.0`` se ``page_width_px`` non è positivo.
         """
         if page_width_px <= 0:
             return 0.0
-        return max(0.0, min(100.0, self.width / page_width_px * 100.0))
+        # B55: la divisione per ``page_width_px`` era dimensionalmente
+        # inconsistente (coordinate normalizzate / pixel). Corretto: usare la
+        # scala normalizzata canonica (DEFAULT_NORMALIZE_RANGE = 1000).
+        return max(0.0, min(100.0, self.width / DEFAULT_NORMALIZE_RANGE * 100.0))
 
     @classmethod
     def from_string(cls, raw: str) -> BBox:

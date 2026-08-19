@@ -222,16 +222,16 @@ def test_pipeline_orphan_caption_preserved(
 def test_pipeline_width_pct_not_constant_div10(
     sample_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Il ``width:N%`` deve variare in base al bbox, non essere sempre ``(x2-x1)/10``.
+    """Il ``width:N%`` deve dipendere dalla scala normalizzata del bbox.
 
-    Bug storico: la formula era ``(x2-x1)/10`` sulle coordinate [0,1000],
-    che per un bbox full-page dava sempre ~73% (su A4 portrait) indipendentemente
-    dal vero rapporto d'aspetto del bbox. Ora il valore deve dipendere
-    dalla dimensione **denormalizzata** del bbox.
+    B55: la formula attuale è ``bbox.width / DEFAULT_NORMALIZE_RANGE * 100``
+    (con clamp ``[25, 100]``). Per un bbox di 300 unità normalizzate su
+    scala ``[0, 1000]`` il valore atteso è ``30.0%`` (identico al vecchio
+    ``(x2-x1)/10`` — la normalizzazione canonica del paper è proprio
+    quella). Per un bbox full-page (``width=1000``) il valore atteso è
+    ``100.0%``. La larghezza della pagina in pixel è ininfluente: la
+    normalizzazione è già rispetto alla pagina.
     """
-    # Due bbox con dimensioni normalizzate diverse (la prima piccola, la
-    # seconda full-page). Con il bug, i width_pct sarebbero (300/10=30) e
-    # (1000/10=100). Con il fix, sono molto diversi (denormalizzati).
     markdown = (
         "# Capitolo\n\n"
         "<|det|>image[100, 100, 400, 400]<|/det|>\n"
@@ -262,5 +262,11 @@ def test_pipeline_width_pct_not_constant_div10(
     assert widths[0] < widths[1], (
         f"Le width devono differire: prima={widths[0]}, seconda={widths[1]}"
     )
-    # E la prima NON deve essere 30 (vecchio bug).
-    assert widths[0] != 30.0
+    # B55: il bbox piccolo (300/1000) → 30%; quello full-page (1000/1000) → 100%.
+    assert widths[0] == pytest.approx(30.0), (
+        f"widths[0] atteso 30.0%, ottenuto {widths[0]}% — il fix B55 richiede "
+        f"che la formula dipenda dalla scala normalizzata, non da page_w_px"
+    )
+    assert widths[1] == pytest.approx(100.0), (
+        f"widths[1] atteso 100.0%, ottenuto {widths[1]}%"
+    )
