@@ -577,6 +577,121 @@ def test_quantization_choices_is_cached() -> None:
 # B31: ingest.py chiude correttamente gli handle PIL Image
 # ----------------------------------------------------------------------
 
+def test_chapter_xhtml_preserves_markdown_in_title() -> None:
+    """B56: un titolo di capitolo che contiene sintassi Markdown (``**bold**``,
+    ``*italic*``, ``\\`code\\```, ``[link](url)``) deve essere **renderizzato**
+    da pypandoc e mantenere l'HTML risultante nell'output finale.
+
+    Bug riprodotto: ``_chapter_xhtml`` costruiva ``f"# {title}\\n\\n{body_markdown}"``
+    e poi sostituiva l'intero tag ``<h1>...</h1>`` generato da pandoc con
+    ``<h1 class="chapter-title">{_xml_escape(title)}</h1>`` (cioè il titolo
+    RAW non renderizzato). L'output mostrava il marcatore Markdown letterale
+    (``**Bold** title``) invece del rendering (``<strong>Bold</strong> title``).
+    """
+    from relictoepub.compile.build_epub import _chapter_xhtml
+
+    cases = [
+        ("**Bold** title", "<strong>Bold</strong>"),
+        ("*italic* here", "<em>italic</em>"),
+        ("`code` span", "<code>code</code>"),
+        ("[anchor](https://example.com)", "<a "),
+    ]
+    for raw_title, expected_html_fragment in cases:
+        xhtml = _chapter_xhtml(raw_title, "Body content.", 1)
+        # 1) L'HTML renderizzato atteso deve comparire nel body.
+        assert expected_html_fragment in xhtml, (
+            f"BUG B56: rendering {expected_html_fragment!r} assente per "
+            f"titolo {raw_title!r}. Output: {xhtml!r}"
+        )
+        # 2) La classe chapter-title deve comunque essere applicata al primo H1.
+        assert '<h1 class="chapter-title"' in xhtml, (
+            f"BUG B56: classe chapter-title mancante per {raw_title!r}. "
+            f"Output: {xhtml!r}"
+        )
+        # 3) Il body H1 NON deve contenere il marcatore Markdown raw.
+        #    (Estraiamo solo il body perché il <title> EPUB resta plain-text
+        #    per pre-existing design — non è il bug fixato da B56.)
+        body_start = xhtml.index("<body>") + len("<body>")
+        body_end = xhtml.rindex("</body>")
+        body = xhtml[body_start:body_end]
+        # Il marcatore markdown raw NON deve essere nel tag <h1> del body.
+        assert f">{raw_title}<" not in body, (
+            f"BUG B56: titolo raw {raw_title!r} presente come testo del "
+            f"<h1> nel body invece del rendering. Body: {body!r}"
+        )
+
+
+def test_chapter_xhtml_plain_title_still_works() -> None:
+    """B56 (regressione): un titolo plain (senza Markdown) deve continuare
+    a funzionare esattamente come prima — niente regressioni per il caso
+    semplice che rappresenta il 99% dei capitoli reali."""
+    from relictoepub.compile.build_epub import _chapter_xhtml
+
+    xhtml = _chapter_xhtml("Plain Title", "Body.", 1)
+    assert "Plain Title" in xhtml
+    # La classe chapter-title deve essere applicata al primo H1. Pandoc
+    # aggiunge un id="plain-title" (auto-id dal testo) che va preservato.
+    assert 'class="chapter-title"' in xhtml
+    assert "<h1" in xhtml
+    assert "Plain Title" in xhtml
+
+
+def test_build_epub_chapter_titles_render_markdown(tmp_path: Path) -> None:
+    """B56 (e2e): un EPUB con titoli H1 che contengono sintassi Markdown deve
+    mostrare l'HTML renderizzato, non il marcatore raw, sia nei capitoli XHTML
+    sia nel TOC (nav.xhtml)."""
+    md = (
+        "# **Bold** chapter\n\nBody A.\n\n"
+        "# *italic* chapter\n\nBody B.\n\n"
+        "# Plain chapter\n\nBody C.\n"
+    )
+    out = tmp_path / "book.epub"
+    build_epub(
+        markdown=md,
+        images=[],
+        metadata=BookMetadata(title="Test"),
+        output_path=out,
+    )
+    with zipfile.ZipFile(out) as zf:
+        chapter_files = [
+            n for n in zf.namelist()
+            if n.startswith("OEBPS/chap_") and n.endswith(".xhtml")
+        ]
+        assert len(chapter_files) >= 3, f"Troppo pochi capitoli: {chapter_files}"
+        # Cerca conferma del rendering in tutti i capitoli.
+        all_content = "\n".join(zf.read(c).decode("utf-8") for c in chapter_files)
+        assert "<strong>Bold</strong>" in all_content, (
+            "BUG B56 (e2e): <strong>Bold</strong> assente dai capitoli EPUB. "
+            "Pandoc ha renderizzato ma il fix non ha preservato il tag."
+        )
+        assert "<em>italic</em>" in all_content, (
+            "BUG B56 (e2e): <em>italic</em> assente dai capitoli EPUB."
+        )
+        # I capitoli devono avere l'H1 con classe chapter-title.
+        for ch in chapter_files:
+            content = zf.read(ch).decode("utf-8")
+            assert 'class="chapter-title"' in content, (
+                f"BUG B56 (e2e): chapter-title mancante in {ch}"
+            )
+        # B56 (TOC): la nav.xhtml NON deve contenere il marcatore raw.
+        nav = zf.read("OEBPS/nav.xhtml").decode("utf-8")
+        assert "**Bold** chapter" not in nav, (
+            "BUG B56 (TOC): marcatore Markdown raw '**Bold** chapter' "
+            "presente letteralmente nella nav.xhtml del EPUB."
+        )
+        assert "*italic* chapter" not in nav, (
+            "BUG B56 (TOC): marcatore Markdown raw '*italic* chapter' "
+            "presente letteralmente nella nav.xhtml del EPUB."
+        )
+        # La TOC deve contenere l'HTML renderizzato.
+        assert "<strong>Bold</strong>" in nav, (
+            "BUG B56 (TOC): <strong>Bold</strong> assente dalla TOC."
+        )
+        assert "<em>italic</em>" in nav, (
+            "BUG B56 (TOC): <em>italic</em> assente dalla TOC."
+        )
+
+
 def test_ingest_render_pdf_closes_pil_handles(tmp_path: Path) -> None:
     """B31: il context manager `with Image.open()` deve essere usato
     per chiudere l'handle di hires_path dopo la normalizzazione.

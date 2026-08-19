@@ -242,29 +242,68 @@ def _chapter_xhtml(title: str, body_markdown: str, level: int) -> str:
     Usa ``pypandoc`` senza ``--standalone`` (che anniderebbe il DOCTYPE
     dentro ogni capitolo). Il wrapper XHTML/root con namespace viene
     costruito qui per garantire EPUB3 conformance.
+
+    Il parametro ``title`` accetta testo raw (legacy: verrà passato a
+    pandoc) oppure HTML pre-renderizzato (B56: prodotto da
+    :func:`_render_title_html`). L'H1 del capitolo è sempre emesso con
+    ``class="chapter-title"`` e l'eventuale HTML interno viene preservato.
     """
-    full_md = f"# {title}\n\n{body_markdown}" if title else body_markdown
-    body_fragment = _convert_markdown_to_xhtml(full_md)
-    # Sostituisci il primo heading h1 generato da pypandoc con un <h1 class="chapter-title">
     if title:
-        body_fragment = re.sub(
-            r"<h1[^>]*>.*?</h1>",
-            f'<h1 class="chapter-title">{_xml_escape(title)}</h1>',
-            body_fragment,
-            count=1,
-            flags=re.DOTALL,
-        )
+        # Se il titolo inizia con '<' è già HTML pre-renderizzato (B56):
+        # wrappiamolo direttamente in <h1 class="chapter-title">.
+        if title.lstrip().startswith("<"):
+            title_h1 = f'<h1 class="chapter-title">{title}</h1>'
+            body_fragment = _convert_markdown_to_xhtml(body_markdown)
+            body_fragment = title_h1 + "\n" + body_fragment
+        else:
+            # Path legacy: titolo raw, lasciamo che pandoc lo renda e poi
+            # iniettiamo SOLO l'attributo class sul primo <h1> generato,
+            # preservando il rendering interno (es. <strong>, <em>, <code>).
+            full_md = f"# {title}\n\n{body_markdown}"
+            body_fragment = _convert_markdown_to_xhtml(full_md)
+            body_fragment = re.sub(
+                r"<h1\b",
+                '<h1 class="chapter-title"',
+                body_fragment,
+                count=1,
+            )
+    else:
+        body_fragment = _convert_markdown_to_xhtml(body_markdown)
+    # Testo del <title> EPUB: testo plain, fallback "Chapter" se vuoto.
+    title_text = re.sub(r"<[^>]+>", "", title) if title else ""
+    title_text = title_text.strip() or "Chapter"
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<!DOCTYPE html>\n'
         '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">\n'
         '<head>\n'
-        f'  <title>{_xml_escape(title) if title else "Chapter"}</title>\n'
+        f'  <title>{_xml_escape(title_text)}</title>\n'
         '  <link rel="stylesheet" href="style.css"/>\n'
         '</head>\n'
         f'<body>\n{body_fragment}\n</body>\n'
         '</html>\n'
     )
+
+
+def _render_title_html(raw_title: str) -> str:
+    """B56: renderizza il testo del titolo (che può contenere Markdown
+    inline come ``**bold**``, ``*italic*``, ``[link](url)``) in frammento
+    HTML tramite pandoc. Ritorna una stringa HTML *senza* tag ``<h1>``
+    (l'H1 viene aggiunto dal chiamante per non duplicare la struttura).
+
+    Usato sia come testo del capitolo (iniettato in :func:`_chapter_xhtml`)
+    sia come entry della TOC (``ChapterInfo.title``). Evita che il
+    marcatore Markdown raw finisca letteralmente nel EPUB finale.
+    """
+    if not raw_title.strip():
+        return ""
+    html = _convert_markdown_to_xhtml(raw_title.strip())
+    # Pandoc può wrappare in <p>...</p>: togliamolo perché è un titolo, non
+    # un paragrafo. Se contiene solo elementi inline, lo strip è sicuro.
+    html = html.strip()
+    if html.startswith("<p>") and html.endswith("</p>"):
+        html = html[3:-4].strip()
+    return html
 
 
 def _xml_escape(text: str) -> str:
@@ -377,8 +416,15 @@ def _build_navigation_xhtml(title: str, chapters: list[ChapterInfo]) -> str:
         # Salta la copertina dall'indice dei capitoli principale
         if ch.filename == "cover.xhtml":
             continue
+        # B56: ``ch.title`` può essere testo plain oppure HTML pre-renderizzato
+        # da pandoc (quando il titolo contiene Markdown). Il testo plain va
+        # XML-escaped; l'HTML è già XHTML-safe.
+        if ch.title.lstrip().startswith("<"):
+            link_text = ch.title
+        else:
+            link_text = _xml_escape(ch.title)
         items.append(
-            f'      <li><a href="{ch.filename}">{_xml_escape(ch.title)}</a></li>'
+            f'      <li><a href="{ch.filename}">{link_text}</a></li>'
         )
     list_content = "\n".join(items)
     return f"""<?xml version="1.0" encoding="utf-8"?>
@@ -400,14 +446,19 @@ def _build_chapter(index: int, raw: dict) -> ChapterInfo:
     """Helper: costruisce un singolo ChapterInfo da un dict splitter output."""
     body = raw.get("body", "")
     title = raw.get("title", "") or ""
+    # B56: il titolo può contenere Markdown (es. ``**Bold** chapter``); viene
+    # renderizzato UNA volta qui e poi riusato sia come ``<h1>`` in testa al
+    # capitolo sia come entry del TOC. Il rendering evita che il marcatore
+    # Markdown raw (``**Bold** chapter``) appaia letteralmente nel EPUB.
+    title_html = _render_title_html(title) if title else ""
     xhtml = _chapter_xhtml(
-        title="",  # non generiamo un titolo H1 duplicato in testa al file
+        title=title_html,
         body_markdown=body,
         level=raw.get("level", 1),
     )
     xhtml = _inject_responsive_images(xhtml)
     return ChapterInfo(
-        title=title or f"Pagina {index + 1}",
+        title=title_html or title or f"Pagina {index + 1}",
         level=raw.get("level", 1),
         filename=f"chap_{index + 1:04d}.xhtml",
         xhtml=xhtml,
