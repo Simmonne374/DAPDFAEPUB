@@ -117,6 +117,37 @@ def test_bbox_width_pct_against_page_width() -> None:
     assert zero.width_pct_against(1000) == 0.0
 
 
+def test_bbox_width_pct_against_page_width_b55_non_coincident() -> None:
+    """B55: il calcolo non deve dipendere dal ``page_width_px``.
+
+    Bug: la formula originale ``self.width / page_width_px * 100`` confondeva
+    le coordinate normalizzate ``[0, 1000]`` del bbox con i pixel della
+    pagina. Il risultato era corretto solo quando ``page_width_px`` coincideva
+    con :data:`DEFAULT_NORMALIZE_RANGE` (1000) — coincidenza che ha permesso
+    ai test esistenti di passare pur con la formula sbagliata.
+
+    Con il fix, un bbox full-page (``width=1000``) deve sempre restituire
+    ``100%`` indipendentemente dalla larghezza della pagina in pixel
+    (A4 a 150 DPI = 1240 px, A4 a 300 DPI = 2480 px, ecc.). Per lo stesso
+    motivo, un bbox che copre 300 unità normalizzate deve sempre dare ``30%``.
+    """
+    full = BBox(0, 0, 1000, 1000)
+    # Full-page bbox: 100% su qualsiasi pagina.
+    assert full.width_pct_against(1240) == pytest.approx(100.0)
+    assert full.width_pct_against(2480) == pytest.approx(100.0)
+    assert full.width_pct_against(1754) == pytest.approx(100.0)
+
+    # Bbox 300 unità normalizzate: 30% (non dipende dalla pagina).
+    small = BBox(100, 100, 400, 400)
+    assert small.width_pct_against(1240) == pytest.approx(30.0)
+    assert small.width_pct_against(2480) == pytest.approx(30.0)
+
+    # Bbox 500 unità: 50%.
+    half = BBox(250, 250, 750, 750)
+    assert half.width_pct_against(1240) == pytest.approx(50.0)
+    assert half.width_pct_against(2480) == pytest.approx(50.0)
+
+
 def test_extract_bbox_tokens_multiple() -> None:
     text = (
         "Capitolo primo\n"
