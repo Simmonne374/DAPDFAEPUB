@@ -24,7 +24,7 @@
 
 [Setup]
 ; Identificativo univoco installer (sostituiscini prima di release pubblica)
-AppId={{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}
+AppId={{0A8FBE89-07FC-416A-8D3B-30FA642DFC5A}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
