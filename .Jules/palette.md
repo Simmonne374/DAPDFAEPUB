@@ -4,3 +4,6 @@
 ## 2024-05-24 - Info Text vs Placeholder
 **Learning:** Important instructions (like 'leave blank to save in default location') should go in the `info` property, not `placeholder`, because placeholders disappear when the user starts typing, causing them to forget the instruction.
 **Action:** Always prefer `info` for persistent field-level instructions, keeping `placeholder` strictly for formatting examples.
+## 2026-08-20 - Placeholder text vs Persistent Instructions
+**Learning:** Placeholders disappear when the user starts typing, making them unsuitable for persistent field-level instructions. The `info` property in Gradio is better suited for persistent instructions, while `placeholder` should strictly be used for formatting examples. Repeating the label in the placeholder is redundant.
+**Action:** Changed the `placeholder` for `title` and `author` inputs to provide formatting examples (e.g., "Es: Il Nome della Rosa") instead of repeating the field labels.

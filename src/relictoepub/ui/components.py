@@ -135,12 +135,12 @@ def advanced_options() -> dict[str, gr.components.Component]:
         ),
         "title": gr.Textbox(
             label="Titolo del libro",
-            placeholder="Titolo del libro",
+            placeholder="Es: Il Nome della Rosa",
             info="Se lasciato vuoto, verrà usato il nome del file PDF.",
         ),
         "author": gr.Textbox(
             label="Autore",
-            placeholder="Autore (opzionale)",
+            placeholder="Es: Umberto Eco",
             info="Se lasciato vuoto, verrà impostato come 'Unknown'.",
         ),
     }
