@@ -47,6 +47,11 @@ except ImportError:
 # ----- Mappatura compute capability → wheel torch -----
 CUDA_WHEEL = {
     # SM major.minor (da "nvidia-smi --query-gpu=compute_cap") → (wheel index URL, versione minima driver)
+    # Maxwell (SM 5.x): non ha piu' wheel ufficiali da cu124 in su. cu118 e'
+    # l'ultima build che supporta SM 5.0/5.2/5.3 (EOL ma ancora funzionante).
+    (5, 0): ("cu118", "11.8"),  # Maxwell GM107 (GTX 750, GTX 750 Ti)
+    (5, 2): ("cu118", "11.8"),  # Maxwell GM20x (GTX 9xx)
+    (5, 3): ("cu118", "11.8"),  # Maxwell GM20x (GTX 960, 970, 980, 980 Ti)
     (6, 0): ("cu118", "11.8"),  # Pascal P100
     (6, 1): ("cu118", "11.8"),  # GTX 10xx (1080 Ti)
     (6, 2): ("cu118", "11.8"),  # Titan Xp
@@ -62,6 +67,10 @@ CUDA_WHEEL = {
 
 WHEEL_BASE = "https://download.pytorch.org/whl"
 TORCH_VERSION_DEFAULT = "2.4.0"
+# Subdirectory (sotto torch_wheel_cache/) in cui memorizziamo i wheel di
+# questa specifica versione di torch. Cambiando versione otteniamo un
+# namespace pulito senza dover migrare i file vecchi.
+_TORCH_CACHE_TAG = f"torch-{TORCH_VERSION_DEFAULT}"
 
 
 # ============================================================
@@ -304,6 +313,95 @@ def download_with_progress(url: str, dest: Path, state: ProgressState, *, timeou
     return False
 
 
+def download_with_fallback(tag: str, state: ProgressState) -> Path | None:
+    """Scarica il wheel richiesto, con fallback automatico a ``cpu`` se fallisce.
+
+    Comportamento:
+      * Tenta ``tag`` fino a 3 volte consecutive.
+      * Se tutte e 3 falliscono, riprova una volta con ``tag='cpu'`` (wheel
+        molto piu' piccolo, mirror diversi, fallback onnipresente).
+      * Se anche CPU fallisce (impossibile in pratica -- il wheel e' sempre
+        disponibile), ritorna ``None``. Il chiamante gestira' come meglio
+        crede.
+      * Lo ``state`` mostra sempre il tag in corso e il motivo del fallback.
+
+    Restituisce il ``Path`` al wheel scaricato, oppure ``None``.
+    """
+    max_attempts_per_tag = 3
+
+    def _try(tag_to_try: str) -> Path | None:
+        last_err: Exception | None = None
+        for attempt in range(1, max_attempts_per_tag + 1):
+            state.set_phase(
+                "download_wheel",
+                message=(
+                    f"Download wheel torch per {tag_to_try} "
+                    f"(tentativo {attempt}/{max_attempts_per_tag})…"
+                ),
+            )
+            dest = download_wheel_for(tag_to_try, state)
+            if dest is not None:
+                return dest
+            # download_wheel_for non ha aggiornato lo stato con la causa,
+            # quindi logghiamo localmente.
+            _log_diagnostic(
+                tag=tag_to_try,
+                attempt=attempt,
+                last_error="download_wheel_for returned None",
+            )
+            last_err = RuntimeError("download_wheel_for returned None")
+        if last_err:
+            _log_diagnostic(
+                tag=tag_to_try,
+                attempt=max_attempts_per_tag,
+                last_error=str(last_err),
+            )
+        return None
+
+    primary = _try(tag)
+    if primary is not None:
+        return primary
+
+    if tag != "cpu":
+        state.set_phase(
+            "download_wheel",
+            message=(
+                f"Download wheel {tag} fallito dopo {max_attempts_per_tag} tentativi. "
+                "Tentativo fallback su CPU…"
+            ),
+        )
+        return _try("cpu")
+    return None
+
+
+def _log_diagnostic(tag: str, attempt: int, last_error: str) -> None:
+    """Scrive una riga JSON strutturata in ``launcher_selfcheck.log``.
+
+    Schema::
+
+        {"ts": <unix>, "event": "download_failure", "tag": "...", "attempt": N, "error": "..."}
+    """
+    try:
+        local = os.environ.get(
+            "LOCALAPPDATA", str(Path.home() / "AppData/Local")
+        )
+        log_dir = Path(local) / "RelicToEpub" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "launcher_selfcheck.log"
+        import json
+        entry = {
+            "ts": time.time(),
+            "event": "download_failure",
+            "tag": tag,
+            "attempt": attempt,
+            "error": last_error,
+        }
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # diagnostico, mai bloccante
+
+
 def install_wheel_inline(wheel_path: Path, state: ProgressState) -> bool:
     """Estrae il wheel torch nella directory ``_internal`` dell'app.
 
@@ -480,11 +578,15 @@ def _check_install_path(app_exe: Path) -> None:
     try:
         import winreg  # type: ignore
         # Apriamo HKLM\...\Uninstall\{AppId}_is1 / InstallLocation
-        appid_guid = "{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}"
+        appid_guid = "{43C83119-4124-4739-8E56-2E41A922ACAC}"
         reg_paths = [
             (winreg.HKEY_LOCAL_MACHINE, appid_guid),
             (winreg.HKEY_CURRENT_USER, appid_guid),
         ]
+        # Su Windows i path sono case-insensitive ma il confronto ``==`` di
+        # Python e' case-sensitive. Normalizziamo con Path.resolve(strict=False)
+        # cosi' "C:\\Program Files" e "c:\\PROGRAM FILES" collidono.
+        parent_resolved = parent.resolve() if parent.exists() else parent
         for hive, guid in reg_paths:
             try:
                 with winreg.OpenKey(
@@ -495,12 +597,20 @@ def _check_install_path(app_exe: Path) -> None:
                     registered, _ = winreg.QueryValueEx(
                         key, "InstallLocation"
                     )
-                if registered and registered != str(parent):
-                    issues.append(
-                        f"path diverge da registro "
-                        f"({registered} vs {parent}): probabile "
-                        f"installazione spostata manualmente"
+                if registered:
+                    registered_path = Path(registered)
+                    registered_resolved = (
+                        registered_path.resolve()
+                        if registered_path.exists()
+                        else registered_path
                     )
+                    # Confronto case-insensitive esplicito su Windows.
+                    if str(registered_resolved).lower() != str(parent_resolved).lower():
+                        issues.append(
+                            f"path diverge da registro "
+                            f"({registered} vs {parent}): probabile "
+                            f"installazione spostata manualmente"
+                        )
                 break
             except OSError:
                 continue
@@ -525,15 +635,58 @@ def _check_install_path(app_exe: Path) -> None:
 
 
 def _wheel_cache_dir() -> Path:
+    """Restituisce la cartella dedicata a questa specifica ``torch`` versione.
+
+    Struttura::
+
+        <LOCALAPPDATA>/RelicToEpub/torch_wheel_cache/torch-<version>/
+
+    Una sottocartella per versione evita che un wheel di torch 2.5 venga
+    scambiato per un wheel 2.4 quando l'utente aggiorna l'app.
+    """
+    local = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))
+    p = Path(local) / "RelicToEpub" / "torch_wheel_cache" / _TORCH_CACHE_TAG
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _wheel_cache_root() -> Path:
+    """Restituisce la root della cache (contenitore di tutte le versioni)."""
     local = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))
     p = Path(local) / "RelicToEpub" / "torch_wheel_cache"
     p.mkdir(parents=True, exist_ok=True)
     return p
 
 
+def _log_stale_caches() -> None:
+    """Elenca e logga (senza cancellare) le cache di versioni torch diverse.
+
+    Preferiamo non cancellare automaticamente: se un downgrade e' in corso
+    o l'utente ha piu' versioni dell'app installate, eliminare la cache
+    vecchia sarebbe una perdita di banda inaspettata. Logghiamo solo,
+    cosi' lo sviluppatore o l'utente puo' decidere.
+    """
+    root = _wheel_cache_root()
+    current = _TORCH_CACHE_TAG
+    try:
+        for entry in root.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name == current:
+                continue
+            # Sottocartella di una versione diversa: logga e basta.
+            _log_selfcheck(
+                f"cache torch obsoleta presente: {entry} "
+                f"(versione corrente: {current}); non rimossa automaticamente"
+            )
+    except OSError as exc:
+        _log_selfcheck(f"impossibile elencare cache torch root {root}: {exc}")
+
+
 def find_cached_wheel(tag: str) -> Path | None:
     cache = _wheel_cache_dir()
-    matches = sorted(cache.glob(f"torch-*-{tag}-*.whl"))
+    # I wheel scaricati hanno il formato torch-<ver>+<tag>-<py>-<py>-<plat>.whl
+    matches = sorted(cache.glob(f"torch-*+{tag}-*.whl"))
     return matches[0] if matches else None
 
 
@@ -587,6 +740,9 @@ def main(argv: list[str]) -> int:
     """Entry-point: riceve ``argv[1]`` = path dell'app exe da lanciare."""
     state = ProgressState()
     state.reset()
+
+    # Logga (senza cancellare) eventuali cache torch di versioni precedenti.
+    _log_stale_caches()
 
     if len(argv) < 2:
         state.error("gpu_bootstrap chiamato senza specificare l'app exe da lanciare")
@@ -654,25 +810,35 @@ def main(argv: list[str]) -> int:
     state.set_phase("verify", message="Ricerca wheel torch in cache locale…")
     cached = find_cached_wheel(tag)
     if cached is None:
-        state.set_phase(
-            "download_wheel",
-            message=f"Download wheel torch per {tag} (necessario al primo avvio)…",
-        )
-        cached = download_wheel_for(tag, state)
-        if cached is None:
-            state.error(f"Impossibile scaricare il wheel torch per {tag}. Avvio in CPU fallback.")
-            time.sleep(2.0)
-            return _launch_app(app_exe, app_args, torch_tag="cpu")
+            cached = download_with_fallback(tag, state)
+            if cached is None:
+                state.error(
+                    f"Impossibile scaricare il wheel torch (richiesto {tag}, "
+                    "fallback CPU esaurito). Avvio senza torch ottimizzato."
+                )
+                time.sleep(2.0)
+                return _launch_app(app_exe, app_args, torch_tag="cpu")
+            # Se siamo caduti sul CPU wheel, settiamo il torch_tag di conseguenza.
+            chosen_tag = "cpu" if "cpu" in cached.name and tag != "cpu" else tag
+            if chosen_tag != tag:
+                state.set_phase(
+                    "verify",
+                    message=(
+                        f"GPU rilevata ({name}) ma wheel {tag} non scaricabile; "
+                        f"uso wheel CPU. Vedi launcher_selfcheck.log per dettagli."
+                    ),
+                )
+                tag = chosen_tag
 
-    # Install
-    if not install_wheel_inline(cached, state):
-        state.error("Installazione wheel fallita. Avvio in CPU fallback.")
-        time.sleep(2.0)
-        return _launch_app(app_exe, app_args, torch_tag="cpu")
+                # Install
+                if not install_wheel_inline(cached, state):
+                    state.error("Installazione wheel fallita. Avvio in CPU fallback.")
+                    time.sleep(2.0)
+                    return _launch_app(app_exe, app_args, torch_tag="cpu")
 
-    state.done(f"Installato torch {tag}. Avvio applicazione…")
-    time.sleep(0.5)
-    return _launch_app(app_exe, app_args, torch_tag=tag)
+                state.done(f"Installato torch {tag}. Avvio applicazione…")
+                time.sleep(0.5)
+                return _launch_app(app_exe, app_args, torch_tag=tag)
 
 
 def _torch_cuda_ok(cc: tuple[int, int]) -> bool:
