@@ -21,10 +21,16 @@
 #define MyAppExeName "RelicToEpubUI.exe"
 #define MyAppCliName "RelicToEpubCLI.exe"
 #define MyAppBootName "RelicToEpubBoot.exe"
+; Pandoc MSI: nome del file MSI di pandoc che installiamo come dipendenza.
+; Sovrascrivibile al build via ISCC: /DPandocMsi=pandoc-3.11-windows-x86_64.msi
+; Il default corrisponde al file commiato nel repo root.
+#ifndef PandocMsi
+  #define PandocMsi "pandoc-3.10-windows-x86_64.msi"
+#endif
 
 [Setup]
 ; Identificativo univoco installer (sostituiscini prima di release pubblica)
-AppId={{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}
+AppId={{43C83119-4124-4739-8E56-2E41A922ACAC}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -46,6 +52,10 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 WizardSizePercent=120
+; Spazio extra richiesto dopo l'install (wheel torch + cache OCR): Windows
+; mostrera' "Required: 3.0 GB, Available: X GB" nella pagina SelectDir.
+; 3221225472 bytes = 3 GiB.
+ExtraDiskSpaceRequired=3221225472
 PrivilegesRequired=admin
 ; "dialog" mostra il prompt UAC; "commandline" consente /SILENT in CI unattended.
 PrivilegesRequiredOverridesAllowed=dialog commandline
@@ -84,7 +94,7 @@ Source: "..\dist\RelicToEpub\*"; DestDir: "{app}"; Flags: ignoreversion recurses
 ; Cartella del bootstrap (separata perché built con COLLECT name="boot")
 Source: "..\dist\boot\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; L'MSI di pandoc da installare come dipendenza esterna
-Source: "..\pandoc-3.10-windows-x86_64.msi"; DestDir: "{tmp}"; Flags: ignoreversion
+Source: "..\{#PandocMsi}"; DestDir: "{tmp}"; Flags: ignoreversion
 
 [Icons]
 ; Icone nel menu Start (uno per ogni eseguibile + collegamento Disinstalla).
@@ -106,7 +116,7 @@ Name: "{userdesktop}\{#MyAppName} (CLI).lnk"; Filename: "{app}\{#MyAppCliName}";
 [Run]
 ; Pandoc silent install — con messaggio di progresso visibile all'utente
 Filename: "msiexec.exe"; \
-    Parameters: "/i ""{tmp}\pandoc-3.10-windows-x86_64.msi"" /qb! ADDLOCAL=ALL REBOOT=ReallySuppress /norestart"; \
+    Parameters: "/i ""{tmp}\{#PandocMsi}"" /qb! ADDLOCAL=ALL REBOOT=ReallySuppress /norestart"; \
     StatusMsg: "Installazione dipendenza esterna: pandoc 3.10 — attendere prego…"; \
     Check: PandocNeeded; Flags: waituntilterminated
 
@@ -222,6 +232,11 @@ const
   LOG_DIR_APP   = '{localappdata}\RelicToEpub\logs';
   SETUP_LOG     = 'installer.log';
   UNINSTALL_LOG = 'uninstaller.log';
+  // File sentinella che segnala un'installazione IN CORSO. Se al prossimo
+  // avvio del setup il file esiste ancora, vuol dire che l'install
+  // precedente e' stato interrotto a meta' (es. crash, BSOD, blackout).
+  SENTINEL_DIR  = '{localappdata}\RelicToEpub';
+  SENTINEL_FILE = 'install.inprogress';
 
 var
   LastLogMsg: String;
@@ -268,6 +283,37 @@ end;
 function IfThenStr(const Cond: Boolean; const ThenStr, ElseStr: String): String;
 begin
   if Cond then Result := ThenStr else Result := ElseStr;
+end;
+
+// ----------------------------------------------------------------------
+// Sentinel file: marca l'inizio/fine installazione per rilevare crash
+// ----------------------------------------------------------------------
+procedure WriteSentinel;
+var
+  Dir, Path: String;
+begin
+  Dir := ExpandConstant(SENTINEL_DIR);
+  if not DirExists(Dir) then
+    CreateDir(Dir);
+  Path := Dir + '\' + SENTINEL_FILE;
+  // Scriviamo l'AppId cosi' i setup di altre app non interferiscono.
+  SaveStringToFile(Path, '{#SetupSetting("AppId")}' + #13#10 +
+    GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + #13#10, False);
+  LogMsg('Sentinel scritto: ' + Path);
+end;
+
+procedure ClearSentinel;
+var
+  Path: String;
+begin
+  Path := ExpandConstant(SENTINEL_DIR) + '\' + SENTINEL_FILE;
+  if FileExists(Path) then
+  begin
+    if DeleteFile(Path) then
+      LogMsg('Sentinel rimosso: ' + Path)
+    else
+      LogMsg('Impossibile rimuovere sentinel: ' + Path);
+  end;
 end;
 
 // ----------------------------------------------------------------------
@@ -325,12 +371,36 @@ end;
 function InitializeSetup(): Boolean;
 var
   Prev: String;
+  SentinelPath: String;
 begin
   Result := True;
   LastLogMsg := '';
   LogMsg('=== Avvio setup RelicToEpub v{#MyAppVersion} ===');
   LogMsg('Destinazione: ' + ExpandConstant('{app}'));
   LogMsg('Privilegi: ' + IfThenStr(IsAdminInstall, 'amministratore', 'utente'));
+
+  // Rileva un'installazione precedente interrotta a meta': se il sentinel
+  // file esiste ancora, vuol dire che il setup precedente e' terminato
+  // senza completare ssDone (crash, blackout, BSOD). Suggeriamo all'utente
+  // di disinstallare la versione precedente prima di proseguire.
+  SentinelPath := ExpandConstant(SENTINEL_DIR) + '\' + SENTINEL_FILE;
+  if FileExists(SentinelPath) then
+  begin
+    LogMsg('Rilevato sentinel di installazione precedente non completata: ' + SentinelPath);
+    if MsgBox(
+      'Un''installazione precedente di RelicToEpub sembra essere stata interrotta prima del completamento.' + #13#10 + #13#10 +
+      'Per evitare file corrotti o voci di registro inconsistenti, raccomandiamo di:' + #13#10 +
+      '  1) uscire da questo installer' + #13#10 +
+      '  2) aprire "Installazione applicazioni" di Windows' + #13#10 +
+      '  3) rimuovere qualsiasi voce RelicToEpub presente' + #13#10 +
+      '  4) rilanciare questo installer' + #13#10 + #13#10 +
+      'Continuare comunque con l''installazione corrente?',
+      mbConfirmation, MB_YESNO) = IDNO then
+    begin
+      Result := False;
+      LogMsg('Setup annullato per sentinel di installazione interrotta');
+    end;
+  end;
 
   Prev := GetPreviousInstallPath;
   if (Prev <> '') and (CompareText(Prev, ExpandConstant('{app}')) <> 0) then
@@ -374,6 +444,7 @@ begin
     ssInstall:
       begin
         LogMsg('CurStepChanged: ssInstall');
+        WriteSentinel;
         if WizardForm.StatusLabel <> nil then
           WizardForm.StatusLabel.Caption :=
             'Estrazione componenti applicazione in corso - Attendere prego.';
@@ -388,6 +459,7 @@ begin
     ssDone:
       begin
         LogMsg('CurStepChanged: ssDone');
+        ClearSentinel;
         if WizardForm.StatusLabel <> nil then
           WizardForm.StatusLabel.Caption :=
             'Configurazione finale (Start Menu, registro) - Quasi terminato.';

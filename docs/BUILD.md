@@ -1,6 +1,6 @@
 # Build del pacchetto Windows
 
-Questa guida spiega come rigenerare l'installer `RelicToEpub-Setup-0.1.0.exe` da sorgenti.
+Questa guida spiega come rigenerare l'installer `RelicToEpub-Setup-0.1.1.exe` da sorgenti.
 
 ---
 
@@ -62,13 +62,13 @@ Cosa fa:
 4. **Build del bootstrap**: `pyinstaller build/relictoepub_boot.spec` → `dist/RelicToEpub/`
 5. **Build dell'app**: `pyinstaller build/relictoepub.spec` → due EXE (`RelicToEpubUI.exe` + `RelicToEpubCLI.exe`) nella stessa `_internal/`
 6. **Copia** `RelicToEpubBoot.exe` accanto agli altri due
-7. **Lancia ISCC**: `ISCC.exe build/installer.iss` → `Output\RelicToEpub-Setup-0.1.0.exe`
+7. **Lancia ISCC**: `ISCC.exe build/installer.iss` → `Output\RelicToEpub-Setup-0.1.1.exe`
 
 ### Output finale
 
 ```
 Output\
-└── RelicToEpub-Setup-0.1.0.exe    (circa 3 GB)
+└── RelicToEpub-Setup-0.1.1.exe    (circa 3 GB)
 
 dist\
 └── RelicToEpub\
@@ -98,6 +98,48 @@ dist\
 | `build/make_icon.ps1` | Rigenera `icon.ico` da zero via System.Drawing |
 | `build/installer.iss` | Script Inno Setup con status page esplicite |
 | `build/build_windows.ps1` | Pipeline completa |
+| `scripts/new_appid.py` | Rigenera il `AppId` UUID v4 in `installer.iss` + `gpu_bootstrap.py` (rifiuta se il working tree ha diff non staged) |
+
+---
+
+## 4b. Personalizzazione del build
+
+### Cambiare la versione di pandoc bundleata
+
+L'installer copia un MSI di pandoc in `_internal\pandoc\` e lo lancia
+con `msiexec /i`. Il filename di default è `pandoc-3.10-windows-x86_64.msi`,
+configurato come `#define PandocMsi` in cima a `build/installer.iss`.
+
+Per bundleare una versione diversa (es. `pandoc-3.11-windows-x86_64.msi`):
+
+```powershell
+ISCC.exe /DPandocMsi=pandoc-3.11-windows-x86_64.msi build\installer.iss
+```
+
+Il `{#PandocMsi}` verra' espanso automaticamente nelle sezioni `[Files]`
+e `[Run]`. Nessun cambio al codice necessario.
+
+### Rigenerare l'AppId (UUID)
+
+Il `AppId` di Inno Setup identifica univocamente il prodotto in
+Installazione applicazioni / registro. Deve cambiare SOLO quando:
+
+- Vuoi che l'installer 0.1.1 venga visto come **prodotto separato**
+  dalla 0.1.0 (es. cambio di namespace, rebranding).
+- Il placeholder `A1B2C3D4-...` e' ancora nel file.
+- Il placeholder placeholder `A1B2C3D4-...` e' ancora nel file.
+
+Per generare un nuovo UUID v4 e applicarlo a `installer.iss` +
+`gpu_bootstrap.py` in modo atomico:
+
+```powershell
+py -3 scripts\new_appid.py            # mostra il nuovo GUID + diff previsto
+py -3 scripts\new_appid.py --apply    # applica le modifiche ai due file
+```
+
+**Sicurezza**: lo script rifiuta di applicare le modifiche se il
+working tree ha diff non staged (rischio di conflitti). Fai prima
+`git add` oppure `git stash` di tutto cio' che non e' committed.
 
 ---
 
@@ -160,7 +202,7 @@ Set-AuthenticodeSignature -FilePath "dist\RelicToEpub\RelicToEpubCLI.exe" -Certi
 Set-AuthenticodeSignature -FilePath "dist\RelicToEpub\RelicToEpubBoot.exe" -Certificate (Get-PfxCertificate -FilePath $pfx -Password $password)
 
 :: Per firmare l'installer, usa signtool.exe (in Windows SDK)
-& "C:\Program Files (x86)\Windows Kits\10\bin\<ver>\x64\signtool.exe" sign /fd SHA256 /a /tr http://timestamp.digicert.com Output\RelicToEpub-Setup-0.1.0.exe
+& "C:\Program Files (x86)\Windows Kits\10\bin\<ver>\x64\signtool.exe" sign /fd SHA256 /a /tr http://timestamp.digicert.com Output\RelicToEpub-Setup-0.1.1.exe
 ```
 
 > **Nota**: il certificato Authenticode per firmare **.exe** costa ~200 USD/anno (CertCentral, DigiCert, ecc.). Alternativa gratuita: usa il certificato **self-signed** (non rimuove warning, ma lo attenua).
@@ -197,11 +239,22 @@ Il bootstrap deve:
 - Provare il download → fallire
 - Mostrare messaggio chiaro all'utente (no crash silenzioso)
 
+### Test su GPU Maxwell (SM 5.x)
+GTX 9xx e GTX 750/750 Ti sono SM 5.0/5.2/5.3. Dalla 0.1.1 queste
+GPU sono **supportate**: il bootstrap mappa SM 5.x a wheel CUDA 11.8
+(l'ultimo cu* che supporta Maxwell). Verifica:
+- Bootstrap scarica il wheel `cu118` da `pytorch.org/whl/cu118`
+- Splash mostra "Compute capability 5.2 → CUDA 11.8" (no fallback CPU)
+- `torch.cuda.is_available()` ritorna `True` se i driver NVIDIA sono
+  recenti (≥ 452.33 per CUDA 11.8)
+
 ### Test su GPU non supportata
-Es. SM 5.x (Maxwell, GTX 9xx):
-- Bootstrap deve rilevare compute capability fuori range
-- Fallire in modo controllato con messaggio "GPU non supportata, fallback CPU"
-- Installare torch CPU-only
+GPU con SM < 5.0 (es. Kepler SM 3.x, Fermi SM 2.x) non hanno piu'
+wheel ufficiali PyTorch. Dalla 0.1.1 il bootstrap fa fallback
+"first SM >= cc" → mappa a `cu118` Maxwell (se i driver sono recenti).
+Solo in caso di driver palesemente vecchi cade a CPU. Verifica:
+- Splash mostra la stringa del tag effettivamente scelto
+- App si avvia correttamente in entrambi i casi
 
 ---
 
@@ -238,7 +291,7 @@ Per build automatico su GitHub Actions / AppVeyor:
   uses: actions/upload-artifact@v4
   with:
     name: relictoepub-setup
-    path: Output\RelicToEpub-Setup-0.1.0.exe
+    path: Output\RelicToEpub-Setup-0.1.1.exe
 ```
 
 > **Tempo atteso**: ~10-15 min (PyInstaller è lento, specialmente la prima volta che estrae tutte le deps).

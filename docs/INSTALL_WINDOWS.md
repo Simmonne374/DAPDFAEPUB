@@ -6,19 +6,19 @@ Questa guida spiega come installare **RelicToEpub** su Windows tramite l'install
 
 ## 1. Download
 
-Scarica l'installer `RelicToEpub-Setup-0.1.0.exe` (~3 GB). È un singolo file che contiene:
+Scarica l'installer `RelicToEpub-Setup-0.1.1.exe` (~3 GB). È un singolo file che contiene:
 
 - L'intera applicazione (Python 3.11 + dipendenze, **escluso** torch)
-- L'MSI di **pandoc 3.10** (verrà installato in automatico come dipendenza)
+- L'MSI di **pandoc 3.10** (verrà installato in automatico come dipendenza; il filename dell'MSI è configurabile via `/DPandocMsi=` al momento del build, vedi `BUILD.md`)
 - Il bootstrap GPU-aware che installerà la build torch corretta al primo avvio
 
-> **Requisito di sistema**: Windows 10 o 11, architettura **x64**. Servono diritti di amministratore per installare pandoc.
+> **Requisito di sistema**: Windows 10 o 11, architettura **x64**. Servono almeno **3 GB liberi** durante l'installazione (l'installer avvisa se lo spazio è insufficiente) e diritti di amministratore per installare pandoc.
 
 ---
 
 ## 2. Installazione
 
-1. Doppio click su `RelicToEpub-Setup-0.1.0.exe`.
+1. Doppio click su `RelicToEpub-Setup-0.1.1.exe`.
 2. Se Windows SmartScreen lo blocca: **"Altre informazioni → Esegui comunque"**. L'installer non è firmato digitalmente in questa versione.
 3. Scegli:
    - La **cartella di installazione** (default: `C:\Program Files\RelicToEpub`)
@@ -48,6 +48,7 @@ Al primo avvio della **UI** (o CLI) parte un piccolo programma intermedio (`Reli
 2. **Sceglie la build torch corretta** per il tuo hardware:
    | GPU | Compute capability | CUDA wheel | Dimensione |
    |-----|-------------------|------------|------------|
+   | NVIDIA Maxwell (GTX 7xx-9xx) | 5.0/5.2/5.3 | CUDA 11.8 | ~1.5 GB |
    | NVIDIA GTX 10xx (Pascal), Tesla V (Volta) | 6.x, 7.x | CUDA 11.8 | ~1.5 GB |
    | RTX 20xx (Turing), RTX 30xx (Ampere), A100 | 7.5, 8.x, 9.x | CUDA 12.4 | ~1.5 GB |
    | RTX 50xx, B100 (Blackwell) | 10.x, 12.x | CUDA 12.6 | ~1.5 GB |
@@ -70,11 +71,14 @@ Se per qualche motivo il download si ferma >10s, il label diventa **"L'operazion
 | Hardware | Primo avvio | Successivi |
 |----------|-------------|------------|
 | PC con GPU NVIDIA RTX serie 30/40 | 30-90 s | < 3 s |
+| PC con GPU NVIDIA Maxwell (GTX 9xx) | 30-60 s | < 3 s |
 | PC con GPU NVIDIA GTX 16/10 | 45-90 s | < 3 s |
 | PC senza GPU NVIDIA | 5-10 s | < 3 s |
 | Connessione lenta (5 Mbps) | fino a 5 min | < 3 s |
 
-La cache wheel persiste in `%LOCALAPPDATA%\RelicToEpub\torch_wheel_cache\`: gli avvii successivi sono istantanei.
+La cache wheel persiste in `%LOCALAPPDATA%\RelicToEpub\torch_wheel_cache\torch-<versione>\`
+(una sottocartella per ogni versione di torch: gli avvii successivi sono
+istantanei e un cambio di versione non sovrascrive la cache precedente).
 
 ---
 
@@ -149,9 +153,11 @@ rmdir /s /q "%AppData%\Microsoft\Windows\Start Menu\Programs\RelicToEpub"
 del /q "%USERPROFILE%\Desktop\RelicToEpub.lnk"
 del /q "%USERPROFILE%\Desktop\RelicToEpub (CLI).lnk"
 
-:: Registro (se l'uninstall ha fallito a meta)
-reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}_is1" /f
-reg delete "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{A1B2C3D4-E5F6-7890-ABCD-1234567890AB}_is1" /f
+:: Registro (se l'uninstall ha fallito a meta).
+:: L'AppId e' un UUID generato; quello mostrato qui corrisponde alla 0.1.1.
+:: Per la versione attuale consulta build/installer.iss.
+reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{43C83119-4124-4739-8E56-2E41A922ACAC}_is1" /f
+reg delete "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{43C83119-4124-4739-8E56-2E41A922ACAC}_is1" /f
 ```
 
 ### Log diagnostici della disinstallazione
@@ -163,6 +169,34 @@ Ogni run di installazione **e** disinstallazione scrive un log in
 |------|-----------|
 | `installer.log` | Installazioni (con warning su path sospetti, registry) |
 | `uninstaller.log` | Disinstallazioni (con elenco shortcut orfani rimossi) |
+
+---
+
+## 5b. Ripristino dopo un'installazione interrotta
+
+A partire dalla **0.1.1**, l'installer scrive un sentinel
+(`%LOCALAPPDATA%\RelicToEpub\install.inprogress`) all'inizio della
+fase di installazione e lo rimuove al termine con successo. Se un
+tentativo precedente e' stato **interrotto** (power loss, crash,
+chiusura forzata della finestra), il sentinel resta sul disco.
+
+Al riavvio dell'installer, se il sentinel viene rilevato:
+
+1. Viene mostrata una pagina di warning: *"Rilevata installazione
+   precedente interrotta — si raccomanda di disinstallare la versione
+   esistente prima di reinstallare."*
+2. Sono offerti due pulsanti: **Disinstalla e reinstalla** (esegue
+   lo script di uninstall e poi rilancia l'install) e **Prosegui
+   comunque** (per utenti esperti che sanno cosa stanno facendo).
+3. L'esito (skip / disinstalla+reinstalla) viene loggato in
+   `%LOCALAPPDATA%\RelicToEpub\logs\installer.log` con il valore
+   del sentinel letto (AppId + timestamp ISO).
+
+Per rimuovere manualmente il sentinel senza reinstallare:
+
+```cmd
+del /q "%LOCALAPPDATA%\RelicToEpub\install.inprogress"
+```
 
 ---
 
@@ -231,6 +265,24 @@ Aggiorna i driver NVIDIA da [nvidia.com/drivers](https://www.nvidia.com/drivers)
    - I driver NVIDIA siano aggiornati
    - Il wheel torch scaricato corrisponda al tuo hardware (vedi log in `%LOCALAPPDATA%\RelicToEpub\logs\gpu_bootstrap.log`)
 
+### "GPU rilevata ma installata build CPU" / fallback automatico
+Dalla **0.1.1**, se il download del wheel CUDA fallisce 3 volte
+consecutive (rete assente, proxy aziendale, mirror non raggiungibile),
+il bootstrap **cade automaticamente** sulla build CPU e l'app resta
+usabile. Lo stato viene aggiornato in splash con il messaggio
+"GPU rilevata ma download fallito: installata build CPU".
+
+Cosa fare:
+1. Apri `%LOCALAPPDATA%\RelicToEpub\logs\launcher_selfcheck.log` e
+   cerca la riga `event: "download_failure"`: ti dice quale URL e'
+   fallito e perche'.
+2. Se sei dietro a un proxy o firewall aziendale, configura
+   `HTTPS_PROXY` come variabile d'ambiente e riavvia l'app.
+3. Se il problema persiste, scarica manualmente il wheel da
+   `https://download.pytorch.org/whl/cu118` (o `cu124`, `cu126` in
+   base alla tua GPU) e piazzalo in
+   `%LOCALAPPDATA%\RelicToEpub\torch_wheel_cache\torch-<versione>\`.
+
 ### Cache wheel torch / modello OCR non rimossi dopo disinstallazione
 Questo e il **comportamento corretto di default**: cache e modello sono
 riutilizzati se reinstalli l'app, evitando di riscaricare 7 GB.
@@ -258,6 +310,7 @@ Tutti i log sono in `%LOCALAPPDATA%\RelicToEpub\logs\`:
 | File | Contenuto |
 |------|-----------|
 | `gpu_bootstrap.log` | Rilevamento GPU, download wheel, errori installazione torch |
+| `launcher_selfcheck.log` | Diagnostica strutturata del bootstrap (validazione path, mismatch registry, fallimenti di download con `event: "download_failure"`) |
 | `ui_launcher.log` | Output Gradio, eccezioni runtime |
 | `cli_launcher.log` | Conversioni eseguite da CLI |
 
