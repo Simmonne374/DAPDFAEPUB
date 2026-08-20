@@ -34,7 +34,7 @@ from relictoepub.checkpoint import (
 from relictoepub.compile.build_epub import BookMetadata, build_epub
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
-from relictoepub.ingest import render_pdf
+from relictoepub.ingest import IngestResult, render_pdf
 from relictoepub.postprocess.bbox_crop import (
     BBox,
     crop_image_from_bbox_with_box,
@@ -272,8 +272,8 @@ class Pipeline:
 
     def resolve_cover_image(
         self,
-        metadata: "BookMetadata",
-        ingest_result: "IngestResult",
+        metadata: BookMetadata,
+        ingest_result: IngestResult,
     ) -> Path | None:
         """Determina il path della cover image da usare per l'EPUB.
 

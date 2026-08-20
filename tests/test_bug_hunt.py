@@ -76,8 +76,6 @@ def test_pipeline_respects_explicit_metadata_cover_image(
     """
     from relictoepub.compile.build_epub import BookMetadata
     from relictoepub.ingest import render_pdf
-    from relictoepub.pipeline import Pipeline
-
     user_cover = sample_image  # 600x800 nera
     cover_md = BookMetadata(title="T", author="A")
     cover_md.cover_image = user_cover
