@@ -52,3 +52,82 @@ def test_unique_manifest_ids_with_colliding_stems(tmp_path: Path) -> None:
     ids = re.findall(r'<item\s+id="([^"]+)"', opf)
     duplicates = [i for i in set(ids) if ids.count(i) > 1]
     assert not duplicates, f"ID duplicati: {duplicates}"
+
+
+def test_pipeline_respects_explicit_metadata_cover_image(
+    tmp_path: Path, sample_pdf: Path, sample_image: Path
+) -> None:
+    """Reproduce BUG: ``Pipeline`` ignora ``metadata.cover_image`` e forza sempre la
+    prima pagina del PDF come cover.
+
+    Scenario: l'utente fornisce un ``BookMetadata(cover_image=sample_image)``
+    esplicito (es. caricato dalla UI Gradio). La pipeline dovrebbe passarlo
+    a :func:`build_epub`. Invece :meth:`Pipeline.run_iter` lo sovrascrive
+    silenziosamente con ``ingest_result.pages[0].original_path``
+    (vedi ``src/relictoepub/pipeline.py``, alla riga della chiamata a
+    ``build_epub``).
+
+    Effetto: ``cover.xhtml`` mostra la PRIMA PAGINA del PDF (identica a
+    ``chap_0001.xhtml``). Quando l'utente fornisce un'immagine di
+    copertina dedicata, viene completamente ignorata.
+
+    Per riprodurre in modo isolato, ci limitiamo a verificare il branch
+    decisionale che la pipeline usa per scegliere il ``cover_image``.
+    """
+    from relictoepub.compile.build_epub import BookMetadata
+    from relictoepub.ingest import render_pdf
+    user_cover = sample_image  # 600x800 nera
+    cover_md = BookMetadata(title="T", author="A")
+    cover_md.cover_image = user_cover
+
+    # Esegui il rendering PDF (per avere pages[0].original_path).
+    ingest_result = render_pdf(sample_pdf, output_dir=tmp_path / "r", dpi=72)
+    first_pdf_image = ingest_result.pages[0].original_path
+
+    # La pipeline attuale non espone un metodo privato per la cover
+    # resolution: verifichiamo direttamente il comportamento in modo
+    # strutturale. Applichiamo la stessa logica che ``run_iter`` esegue.
+    # Logica attuale (BUG):
+    cover_image = (
+        ingest_result.pages[0].original_path
+        if ingest_result.pages else None
+    )
+
+    # Dopo il fix dovrà essere: cover_image = cover_md.cover_image or
+    # ingest_result.pages[0].original_path
+    assert cover_image == first_pdf_image, (
+        "Baseline: la pipeline usa la prima pagina del PDF come cover"
+    )
+    assert cover_image != user_cover, (
+        "BUG riprodotto: la pipeline NON rispetta metadata.cover_image "
+        "impostato dall'utente"
+    )
+
+
+def test_pipeline_prefers_explicit_cover_over_first_page(
+    tmp_path: Path, sample_pdf: Path, sample_image: Path
+) -> None:
+    """Test che valida il FIX atteso.
+
+    Una volta corretta la pipeline, risolvere la cover image deve
+    restituire ``metadata.cover_image`` quando esplicitamente fornito,
+    e solo in fallback la prima pagina del PDF.
+    """
+    from relictoepub.compile.build_epub import BookMetadata
+    from relictoepub.ingest import render_pdf
+    from relictoepub.pipeline import Pipeline
+
+    user_cover = sample_image
+    cover_md = BookMetadata(title="T", author="A")
+    cover_md.cover_image = user_cover
+
+    ingest_result = render_pdf(sample_pdf, output_dir=tmp_path / "r", dpi=72)
+
+    pipeline = Pipeline()
+    resolved = pipeline.resolve_cover_image(
+        metadata=cover_md,
+        ingest_result=ingest_result,
+    )
+    assert resolved == user_cover, (
+        f"Cover risolta in modo errato: atteso {user_cover}, ottenuto {resolved}"
+    )

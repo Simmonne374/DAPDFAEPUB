@@ -34,7 +34,7 @@ from relictoepub.checkpoint import (
 from relictoepub.compile.build_epub import BookMetadata, build_epub
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
-from relictoepub.ingest import render_pdf
+from relictoepub.ingest import IngestResult, render_pdf
 from relictoepub.postprocess.bbox_crop import (
     BBox,
     crop_image_from_bbox_with_box,
@@ -270,10 +270,54 @@ class Pipeline:
         """Resetta il cancel event per riusare la stessa istanza Pipeline."""
         self._cancel_event.clear()
 
+    def resolve_cover_image(
+        self,
+        metadata: BookMetadata,
+        ingest_result: IngestResult,
+    ) -> Path | None:
+        """Determina il path della cover image da usare per l'EPUB.
+
+        Regole (in ordine di priorità):
+        1. ``metadata.cover_image`` se impostato e il file esiste su disco.
+        2. Prima pagina del PDF (``ingest_result.pages[0].original_path``)
+           come fallback per libri senza cover dedicata.
+        3. ``None`` se il PDF non ha pagine (caso degenere).
+
+        Centralizzato qui (vs inline nel :meth:`run_iter`) per:
+        * permettere ai test di validare la logica senza eseguire l'OCR;
+        * dare un'unica sorgente di verità condivisa con eventuali altri
+          consumer (es. UI Gradio che voglia mostrare l'anteprima).
+
+        Args:
+            metadata: metadata del libro; il campo ``cover_image`` viene
+                onorato se impostato.
+            ingest_result: risultato del rendering PDF.
+
+        Returns:
+            Path al file di cover (``PNG``/``WEBP``/...) oppure ``None``.
+        """
+        # 1) Cover esplicita dall'utente (vince sempre se esiste).
+        user_cover = getattr(metadata, "cover_image", None)
+        if user_cover is not None:
+            user_cover_path = Path(user_cover)
+            if user_cover_path.is_file():
+                return user_cover_path
+            logger.warning(
+                "metadata.cover_image=%s non trovato su disco; "
+                "fallback alla prima pagina del PDF.",
+                user_cover_path,
+            )
+
+        # 2) Fallback: prima pagina del PDF.
+        if ingest_result.pages:
+            return ingest_result.pages[0].original_path
+
+        # 3) PDF vuoto (caso degenere).
+        return None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
     def run(
         self,
         input_pdf: Path,
@@ -764,12 +808,18 @@ class Pipeline:
 
         # 6) Compile EPUB
         yield ProgressEvent(phase="compiling", message="Compilazione EPUB3…")
+        # BUG HUNT: la pipeline in passato sovrascriveva sempre la cover
+        # con la prima pagina del PDF, ignorando ``metadata.cover_image``
+        # impostato dall'utente (es. da UI Gradio). Centralizzato in
+        # :meth:`resolve_cover_image` per consentire override espliciti
+        # e garantire copertura dei test di regressione.
+        cover_image = self.resolve_cover_image(self.metadata, ingest_result)
         result_path = build_epub(
             markdown=cleaned,
             images=final_images,
             metadata=self.metadata,
             output_path=output_epub,
-            cover_image=ingest_result.pages[0].original_path if ingest_result.pages else None,
+            cover_image=cover_image,
         )
 
         elapsed = time.perf_counter() - start
