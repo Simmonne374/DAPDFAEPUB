@@ -786,3 +786,67 @@ def test_advanced_options_quantization_dropdown_is_populated() -> None:
     assert qd.value in flat_choices, (
         f"BUG B48: default {qd.value!r} non presente nelle scelte {qd.choices!r}"
     )
+
+
+# ----------------------------------------------------------------------
+# B57: ``build_epub`` scriveva ``mimetype`` con ``Path.write_text`` che di
+# default aggiunge un newline finale. EPUB 3.0 §4.1 (OPS-3) richiede che il
+# contenuto del file ``mimetype`` SIA ESATTAMENTE la stringa
+# ``application/epub+zip`` (19 byte, niente '\n' finale). EpubCheck 5+
+# segnala la presenza del newline come WARNING.
+# ----------------------------------------------------------------------
+
+
+def test_build_epub_mimetype_has_no_trailing_newline(tmp_path: Path) -> None:
+    """B57 (e2e): il file ``mimetype`` nell'EPUB finale deve essere esattamente
+    ``b"application/epub+zip"`` (20 byte), SENZA newline finale.
+
+    La specifica EPUB 3.0 §4.1 impone che ``mimetype`` sia memorizzato non
+    compresso come PRIMO entry dello ZIP e che il suo contenuto sia esattamente
+    la stringa ``application/epub+zip``. Un newline finale (introdotto da
+    ``Path.write_text``) genera un WARNING in EpubCheck ed è una causa comune
+    di non conformità per libri prodotti con pipeline custom.
+    """
+    out = tmp_path / "book.epub"
+    build_epub(
+        markdown="# Capitolo 1\n\nTesto del libro.",
+        images=[],
+        metadata=BookMetadata(title="B57", author="Tester"),
+        output_path=out,
+    )
+    assert out.is_file(), "build_epub non ha prodotto il file .epub"
+
+    with zipfile.ZipFile(out) as zf:
+        # 1) ``mimetype`` deve essere presente.
+        assert "mimetype" in zf.namelist(), "BUG B57: file mimetype mancante"
+
+        # 2) Deve essere il PRIMO entry dello ZIP (zip standard richiede
+        # proprio che mimetype sia memorizzato per primo e non compresso).
+        assert zf.namelist()[0] == "mimetype", (
+            f"BUG B57: mimetype non è il primo entry dello ZIP: {zf.namelist()[:3]}"
+        )
+
+        # 3) Deve essere memorizzato NON compresso (ZIP_STORED, no deflate).
+        info = zf.getinfo("mimetype")
+        assert info.compress_type == zipfile.ZIP_STORED, (
+            f"BUG B57: mimetype compresso (type={info.compress_type}); "
+            f"deve essere ZIP_STORED per EPUB 3"
+        )
+
+        # 4) Il contenuto deve essere ESATTAMENTE ``application/epub+zip``
+        #    (20 byte) senza alcun trailing newline o altro whitespace.
+        #    NOTA: ``application/epub+zip`` è una stringa ASCII di 20 caratteri
+        #    (``application`` 11 + ``/`` 1 + ``epub+zip`` 8 = 20). Il bug B57
+        #    era che ``Path.write_text`` aggiungeva un ``\n`` finale portando
+        #    la lunghezza a 21 byte e generando un WARNING in EpubCheck.
+        data = zf.read("mimetype")
+        assert data == b"application/epub+zip", (
+            f"BUG B57: contenuto mimetype non conforme: {data!r} "
+            f"(atteso b'application/epub+zip', len={len(data)})"
+        )
+        assert len(data) == 20, (
+            f"BUG B57: lunghezza mimetype errata: {len(data)} byte (atteso 20)"
+        )
+        # Anti-regression esplicita: nessun '\n' né '\r' finale.
+        assert not data.endswith(b"\n"), "BUG B57: trailing '\\n' nel mimetype"
+        assert not data.endswith(b"\r"), "BUG B57: trailing '\\r' nel mimetype"

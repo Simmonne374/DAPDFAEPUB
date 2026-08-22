@@ -28,6 +28,28 @@ logger = logging.getLogger(__name__)
 # modello OCR può occasionalmente emettere al posto del "-" ASCII.
 _END_OF_LINE_HYPHEN = re.compile(r"[-\u00AD]\s*\n\s*")
 
+# B39: blocchi di codice fenced (```` ``` ```` e `~~~`). La regex
+# cattura l'intero blocco inclusi i fence di apertura/chiusura e
+# l'eventuale info-string (``python``, ``text``, …). Il flag ``re.DOTALL``
+# permette al ``.*?`` di matchare i newline (i code block sono multi-linea).
+_FENCED_CODE_BLOCK = re.compile(
+    r"(?P<fence>```|~~~)[^\n]*\n.*?^(?P=fence)[ \t]*$",
+    re.DOTALL | re.MULTILINE,
+)
+
+# B39: righe markdown "orizzontali" o setext-underline, fatte SOLO di
+# ``-``, ``_``, ``*`` o ``=`` (con almeno 3 caratteri). Senza protezione,
+# la de-hyphenation mangerebbe l'ultimo ``-`` di una riga ``---``,
+# trasformandola in ``--`` (non più valida come divisore markdown).
+_HORIZONTAL_RULE = re.compile(r"^[ \t]*([-_*])\1{2,}[ \t]*$", re.MULTILINE)
+
+# Placeholder usato per sostituire temporaneamente i code block durante la
+# de-hyphenation. La sequenza è volutamente improbabile nel testo OCR
+# (``\x00CODEBLOCK0\x00``, ``\x00CODEBLOCK1\x00``, …) così da non collidere
+# con il contenuto reale e da essere riconoscibile nei test diagnostici.
+_B39_PLACEHOLDER_PREFIX = "\x00CODEBLOCK"
+_B39_PLACEHOLDER_SUFFIX = "\x00"
+
 # Apostrofi tipografici → ASCII (gli e-Reader come Kindle base non li gestiscono)
 _TYPOGRAPHIC_QUOTES = re.compile(r"[‘’`´]")  # solo la serie "left-single + backtick"
 _TYPOGRAPHIC_QUOTES_DOUBLE = re.compile(r"[“”«»]")
@@ -54,6 +76,29 @@ def clean_text(text: str, *, fix_hyphenation: bool = True, normalize_quotes: boo
     if not text:
         return text
 
+    # B39: proteggi i blocchi di codice fenced DA TUTTE le trasformazioni.
+    # Senza questa protezione due bug distinti si manifestano:
+    # 1) ``_END_OF_LINE_HYPHEN`` mangia il ``-`` fine-riga anche quando fa
+    #    parte di un URL (``foo-\nbar`` in code block) o di un identifier
+    #    (``my-kebab-\ncase_func``), corrompendo URL / sintassi Python /
+    #    markdown orizzontale (``---\n``).
+    # 2) ``_TYPOGRAPHIC_QUOTES`` contiene il carattere backtick ``\u0060``
+    #    che verrebbe sostituito con ``'``, distruggendo i fence ``` ``` e
+    #    tutto il markdown strutturato all'interno del blocco.
+    # La protezione va applicata PRIMA di ogni altra regex e i blocchi vanno
+    # ripristinati ALLA FINE, dopo i collassi di newline/spazi che potrebbero
+    # modificare leggermente il testo circostante.
+    code_blocks: list[str] = []
+    def _stash_code_block(match: re.Match[str]) -> str:
+        code_blocks.append(match.group(0))
+        return f"{_B39_PLACEHOLDER_PREFIX}{len(code_blocks) - 1}{_B39_PLACEHOLDER_SUFFIX}"
+    text = _FENCED_CODE_BLOCK.sub(_stash_code_block, text)
+
+    # B39: proteggi anche le righe orizzontali markdown (``---``, ``***``,
+    # ``___``). La regex ``_END_OF_LINE_HYPHEN`` mangerebbe l'ultimo ``-``
+    # di ``---\n`` lasciando ``--`` (non più una regola orizzontale valida).
+    text = _HORIZONTAL_RULE.sub(_stash_code_block, text)
+
     if normalize_quotes:
         text = _TYPOGRAPHIC_QUOTES.sub("'", text)
         text = _TYPOGRAPHIC_QUOTES_DOUBLE.sub('"', text)
@@ -70,13 +115,21 @@ def clean_text(text: str, *, fix_hyphenation: bool = True, normalize_quotes: boo
         # ``clean_text``; queste regex sono un safety-net per tag malformati
         # sfuggiti al parser. ``[^\n]*?`` impedisce al ``.*?`` di mangiare più
         # righe (caso in cui mancherebbe il ``<|/det|>`` di chiusura).
-        text = re.sub(r"<\|det\|>[^\n]*?\[.*?\][^\n]*?<\|/det\|>", "", text)
-        text = re.sub(r"<\|bbox\|[^\n]*?\|>", "", text)
+    text = re.sub(r"<\|det\|>[^\n]*?\[.*?\][^\n]*?<\|/det\|>", "", text)
+    text = re.sub(r"<\|bbox\|[^\n]*?\|>", "", text)
 
     # Collassa 3+ newline in 2 (per separare i paragrafi in Markdown)
     text = _MULTI_NEWLINE.sub("\n\n", text)
     # Rimuovi spazi trailing prima di newline
     text = _TRAILING_WHITESPACE.sub("\n", text)
+
+    # B39: ripristina i blocchi di codice protetti (dopo tutti gli altri
+    # collassi, così i newline circostanti sono già normalizzati).
+    for i, block in enumerate(code_blocks):
+        text = text.replace(
+            f"{_B39_PLACEHOLDER_PREFIX}{i}{_B39_PLACEHOLDER_SUFFIX}",
+            block,
+        )
 
     return text.strip()
 
