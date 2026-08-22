@@ -524,8 +524,11 @@ def build_epub(
         images_dir = oebps / "images"
         images_dir.mkdir()
 
-        # Mimetype (deve essere il primo file, non compresso)
-        (tmp_path / "mimetype").write_text("application/epub+zip", encoding="ascii")
+        # Mimetype (deve essere il primo file, non compresso, e con contenuto
+        # ESATTAMENTE ``application/epub+zip`` senza trailing newline, cfr.
+        # EPUB 3.0 §4.1 OPS-3 — ``Path.write_text`` aggiunge un '\n' finale
+        # che genera un warning in EpubCheck).
+        (tmp_path / "mimetype").write_bytes(b"application/epub+zip")
 
         # Container.xml
         container_xml = """<?xml version="1.0"?>
