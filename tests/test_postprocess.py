@@ -259,3 +259,128 @@ def test_clean_text_empty() -> None:
 def test_count_words() -> None:
     assert count_words("uno due tre") == 3
     assert count_words("") == 0
+
+
+# ----------------------------------------------------------------------
+# B39: ``_END_OF_LINE_HYPHEN`` rimuove il trattino fine-riga anche dentro
+# blocchi di codice fenced, URL e parole inglesi con prefisso (well-known).
+# Conseguenza: URL / identificatori / sintassi markdown orizzontale (---)
+# vengono erroneamente collassati.
+# ----------------------------------------------------------------------
+
+
+BT = "`"  # backtick abbreviato per evitare problemi di escaping
+
+
+def test_clean_text_B_39_preserves_hyphen_in_fenced_url() -> None:
+    """B39: ``clean_text`` NON deve toccare il trattino fine-riga dentro un
+    blocco di codice fenced contenente un URL.
+
+    Caso riprodotto da OCR su libri tecnici:
+    ```` 
+    https://example.com/foo-
+    bar/baz
+    ````
+    deve restare intatto (il '-' è parte dell'URL, non una sillabazione).
+    """
+    raw = (
+        "Vedi:\n\n"
+        + BT * 3 + "\n"
+        "https://example.com/foo-\nbar/baz\n"
+        + BT * 3 + "\n\nFine."
+    )
+    cleaned = clean_text(raw)
+    # L'URL NON deve essere collassato: deve contenere ancora "foo-\\nbar"
+    # (cioè il trattino di fine riga deve essere preservato all'interno del
+    # blocco fenced).
+    assert "foo-\nbar" in cleaned, (
+        f"BUG B39: URL collassato in {cleaned!r} (atteso 'foo-\\nbar' "
+        f"preservato dentro il blocco fenced)"
+    )
+    # E in ogni caso non deve apparire la versione collassata "foobar".
+    assert "foobar/baz" not in cleaned, (
+        f"BUG B39: URL collassato in 'foobar/baz' in {cleaned!r}"
+    )
+
+
+def test_clean_text_B_39_preserves_hyphen_in_fenced_kebab_identifier() -> None:
+    """B39: ``clean_text`` NON deve toccare '-' fine-riga dentro un identifier
+    kebab-case in un blocco di codice fenced.
+
+    Esempio reale di codice Python spezzato su due righe in un libro tecnico:
+        def my-kebab-
+            case_func():
+    L'identificatore ``my-kebab-case_func`` NON deve diventare ``my-kebabcase_func``.
+    """
+    raw = (
+        BT * 3 + "python\n"
+        "def my-kebab-\ncase_func():\n"
+        "    pass\n"
+        + BT * 3
+    )
+    cleaned = clean_text(raw)
+    assert "my-kebab-\ncase_func" in cleaned, (
+        f"BUG B39: identifier kebab-case collassato in {cleaned!r}"
+    )
+    assert "my-kebabcase_func" not in cleaned, (
+        f"BUG B39: identifier collassato in 'my-kebabcase_func' in {cleaned!r}"
+    )
+
+
+def test_clean_text_B_39_preserves_well_known_inline() -> None:
+    """B39: la regex NON deve correggere parole inglesi con prefisso
+    ``well-known``, ``high-level`` ecc. se la sillabazione è in una posizione
+    che non è fine-parola tipografica (per esempio a metà di un commento).
+
+    NB: il caso inline è borderline — l'issue #39 lo cita come esempio.
+    La policy del fix è: la sillabazione fine-riga si applica SOLO nel
+    flusso di testo "tipografico" (cioè paragrafi normali). Dentro i
+    code block va preservata; inline è giusto collassarla quando è seguita
+    da una sola parola. Verifichiamo che almeno dentro i code block il
+    pattern sia preservato.
+    """
+    # Caso code block: deve essere preservato
+    raw_code = (
+        "Comment:\n"
+        + BT * 3 + "\n"
+        "well-\nknown pattern\n"
+        + BT * 3
+    )
+    cleaned_code = clean_text(raw_code)
+    assert "well-\nknown" in cleaned_code, (
+        f"BUG B39: 'well-\\nknown' collassato in code block: {cleaned_code!r}"
+    )
+
+
+def test_clean_text_B_39_preserves_markdown_horizontal_rule() -> None:
+    """B39: ``clean_text`` NON deve mangiare il ``--`` di una riga di
+    divisione orizzontale Markdown (``---``).
+
+    La regex ``[-\\u00AD]\\s*\\n\\s*`` mangiava la sequenza ``--\\n`` di un
+    tema (``---\\n``) lasciando solo ``--`` che NON è più una riga
+    orizzontale valida in Markdown.
+    """
+    raw = "Capitolo 1\n\n---\n\nCapitolo 2"
+    cleaned = clean_text(raw, fix_hyphenation=True)
+    # La sequenza "---" seguita da newline deve essere preservata intatta.
+    assert "\n---\n" in cleaned, (
+        f"BUG B39: divisione markdown '---' corrotta in {cleaned!r}"
+    )
+
+
+def test_clean_text_B_39_still_collapses_typographic_hyphenation() -> None:
+    """B39 (anti-regressione): la sillabazione tipografica nel testo
+    normale DEVE continuare a essere collassata.
+
+    Protegge contro un fix troppo aggressivo che disabiliti del tutto
+    la de-hyphenation per paura di rompere i code block.
+    """
+    raw = "questa è una para-\ngraphia bellissima"
+    cleaned = clean_text(raw)
+    assert "paragraphia" in cleaned, (
+        f"BUG B39 (anti-regressione): sillabazione tipografica non più "
+        f"collassata: {cleaned!r}"
+    )
+    assert "para-\ngraphia" not in cleaned, (
+        f"BUG B39 (anti-regressione): sillabazione preservata: {cleaned!r}"
+    )
