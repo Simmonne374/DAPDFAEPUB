@@ -720,22 +720,33 @@ class Pipeline:
                         and last_was_image == m_label
                         and last_img_html is not None
                     ):
-                        # Estrai il testo della caption: tutto cio che segue
-                        # il tag fino al prossimo newline / prossimo <|det|>.
-                        tail = page_text[
-                            det_match.end():det_match.end() + 400
-                        ]
-                        cut = re.search(r"[\n]|<\|", tail)
-                        caption_text = (
-                            tail[: cut.start()] if cut else tail
-                        ).strip()
+                        # B58: la caption può superare i 400 char (es.
+                        # didascalie di tabelle, descrizioni estese di figure).
+                        # La cercavamo in una finestra fissa di 400 char,
+                        # troncando il testo e riversando la parte eccedente
+                        # nel flusso principale come paragrafo orfano dopo
+                        # ``</figure>`` (contenuto duplicato nell'EPUB).
+                        # Cerchiamo ora il primo ``\n`` o ``<|`` SENZA
+                        # limiti di lunghezza sul testo sorgente, e avanziamo
+                        # ``cursor`` di pari passo per consumare la caption
+                        # estratta (evita la duplicazione).
+                        rest = page_text[det_match.end():]
+                        cut = re.search(r"[\n]|<\|", rest)
+                        cut_pos = cut.start() if cut else len(rest)
+                        caption_text = rest[:cut_pos]
                         caption_text = re.sub(
                             r"<\|ref\|>.*?<\|/ref\|>", "", caption_text,
+                            flags=re.DOTALL,
                         ).strip()
                         # Flush del <figure> con <figcaption>.
                         pieces.append(
                             _build_figure(last_img_html, caption=caption_text or None),
                         )
+                        # Consuma la caption dal flusso principale: senza
+                        # questo, il testo verrebbe re-incluso in
+                        # ``page_text[cursor:]`` a fine loop, duplicando
+                        # la caption nell'EPUB finale.
+                        cursor = det_match.end() + cut_pos
                         last_img_html = None
                         last_was_image = None
                         continue
