@@ -111,9 +111,10 @@ def advanced_options() -> dict[str, gr.components.Component]:
     """
     return {
         "pages_per_batch": gr.Slider(
-            minimum=1, maximum=20, value=1, step=1,
+            minimum=1, maximum=20, value=20, step=1,
             label="Pagine per batch OCR (1–20)",
-            info="Consigliato: 1 per stabilità e per prevenire OOM/loop su GTX 1080 Ti",
+            info="Consigliato: 20 (coerente con CLI e InferenceConfig). "
+                 "Riduci se hai OOM/loop su GPU con poca VRAM.",
         ),
         "dpi": gr.Slider(
             minimum=150, maximum=600, value=300, step=50,
