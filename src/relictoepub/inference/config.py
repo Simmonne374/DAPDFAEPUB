@@ -13,9 +13,12 @@ l'utente (es. ``batch_size``), senza toccare quelli del paper.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class QuantizationMode(str, Enum):
@@ -92,17 +95,53 @@ class InferenceConfig:
     min_gpu_memory_gb: float = 8.0  # sotto soglia, CPU fallback
 
     def resolve_device(self) -> str:
-        """Restituisce il device effettivo (``"cuda"`` o ``"cpu"``)."""
+        """Restituisce il device effettivo (``"cuda"`` o ``"cpu"``).
+
+        Con ``device="auto"`` tenta CUDA e ricade su CPU in caso di:
+
+        * torch non installato (``ImportError``),
+        * driver CUDA assente o rotto (``RuntimeError`` /
+          ``OSError`` da ``torch.cuda.is_available()`` o
+          ``torch.cuda.mem_get_info()``).
+
+        Tutti i fallback su CPU sono loggati a ``WARNING`` con la
+        categoria di errore e il messaggio originale, così l'utente
+        può diagnosticare la causa senza dover abilitare il debug.
+        """
         if self.device != "auto":
             return self.device
         try:
             import torch
             if torch.cuda.is_available():
-                free_gb = torch.cuda.mem_get_info()[0] / (1024**3)
+                try:
+                    free_gb = torch.cuda.mem_get_info()[0] / (1024**3)
+                except (RuntimeError, OSError) as exc:
+                    logger.warning(
+                        "torch.cuda.is_available()=True ma torch.cuda.mem_get_info() "
+                        "fallito (%s: %s); fallback su CPU.",
+                        type(exc).__name__,
+                        exc,
+                    )
+                    return "cpu"
                 if free_gb >= self.min_gpu_memory_gb:
                     return "cuda"
-        except ImportError:
-            pass
+                logger.warning(
+                    "CUDA disponibile ma VRAM libera (%.1f GB) sotto la soglia "
+                    "(%.1f GB); fallback su CPU.",
+                    free_gb,
+                    self.min_gpu_memory_gb,
+                )
+                return "cpu"
+        except ImportError as exc:
+            logger.warning(
+                "torch non importabile (%s); fallback su CPU.", exc
+            )
+        except (RuntimeError, OSError) as exc:
+            logger.warning(
+                "torch.cuda.is_available() ha sollevato %s: %s; fallback su CPU.",
+                type(exc).__name__,
+                exc,
+            )
         return "cpu"
 
     def to_dict(self) -> dict:
