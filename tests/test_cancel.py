@@ -407,14 +407,11 @@ def test_cancel_without_checkpoint_save_skips_persistence(
 
         def run_batch_iter(self, paths):
             n_calls["ocr"] += 1
-            # Stesso pattern del test che funziona: yield + delay + done.
-            # L'utente preme cancel DOPO che il batch 0 ha emesso done.
             yield "# B0 partial", "running"
-            time.sleep(0.2)  # delay lungo → dà tempo al thread di cancel
-            yield "# B0 partial", "running"
+            # Cancel settato reattivamente durante il primo batch
+            pipeline.cancel()
             yield "# B0 done", "done"
             # Batch 1: deve short-circuit al cancel check mid-batch.
-            yield "# B1 running", "running"
             yield "# B1 running", "running"
             yield "# B1 done", "done"
 
@@ -437,15 +434,10 @@ def test_cancel_without_checkpoint_save_skips_persistence(
         metadata=BookMetadata(title="W"),
         # NO checkpoint_store
     )
-    # Cancel AFTER batch 0 done (which fires after 0.2s of mock delay)
-    def delayed_cancel():
-        time.sleep(0.25)  # > 0.2s del mock → cancel dopo done del B0
-        pipeline.cancel()
-    t = threading.Thread(target=delayed_cancel, daemon=True)
-    t.start()
+
     with pytest.raises(PipelineCancelledError):
         list(pipeline.run_iter(pdf, tmp_path / "out.epub"))
-    t.join()
+
     # Almeno 1 OCR eseguita. Senza checkpoint_store,
     # ``completed_batches`` nell'eccezione è 0 by design
     # (lo stato non è persistito): verifichiamo quindi l'altro
