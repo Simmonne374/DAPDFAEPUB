@@ -114,6 +114,18 @@ class CheckpointMismatchError(RuntimeError):
     """Il checkpoint esiste ma appartiene a un PDF diverso."""
 
 
+class CheckpointConfigMismatchError(RuntimeError):
+    """Il checkpoint esiste ma è stato creato con un ``batch_size``
+    (``pages_per_batch``) diverso da quello attuale.
+
+    Cambiare ``--pages-per-batch`` tra due run sulla stessa PDF mescola
+    silenziosamente le pagine nei batch cached: la pipeline riusa il
+    markdown di un batch da N pagine come se fosse da M pagine. Il
+    resume deve quindi rifiutare esplicitamente la situazione per evitare
+    un EPUB finale con pagine in ordine sbagliato.
+    """
+
+
 class CheckpointStore:
     """Persistenza thread-safe di uno stato checkpoint.
 
@@ -258,6 +270,7 @@ __all__ = [
     "CHECKPOINT_DIRNAME",
     "CHECKPOINT_FILENAME",
     "CHECKPOINT_VERSION",
+    "CheckpointConfigMismatchError",
     "CheckpointMismatchError",
     "CheckpointState",
     "CheckpointStore",

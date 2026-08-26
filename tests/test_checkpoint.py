@@ -20,6 +20,7 @@ import pytest
 from relictoepub.checkpoint import (
     CHECKPOINT_FILENAME,
     CHECKPOINT_VERSION,
+    CheckpointConfigMismatchError,
     CheckpointMismatchError,
     CheckpointState,
     CheckpointStore,
@@ -387,3 +388,115 @@ def test_pipeline_no_checkpoint_no_resume(
     list(pipeline.run_iter(pdf, tmp_path / "out.epub"))
     # 4 pages / batch_size 2 = 2 invocazioni OCR
     assert n_calls["ocr"] == 2
+
+
+# -------------------------------------------------------------------
+# 6) B32: batch_size mismatch detection al resume
+# -------------------------------------------------------------------
+
+
+def test_pipeline_checkpoint_batch_size_mismatch_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B32: se il checkpoint esiste per lo stesso PDF ma con un
+    ``batch_size`` diverso, la pipeline deve rifiutare il resume con
+    ``CheckpointConfigMismatchError`` invece di riusare il markdown
+    cached aggregato per un numero di pagine diverso (che mescola
+    silenziosamente le pagine nell'EPUB finale).
+    """
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nfake\n%%EOF\n")
+
+    # Checkpoint creato con batch_size=20 (es. primo run)
+    store = CheckpointStore(resolve_checkpoint_dir(pdf))
+    state = new_checkpoint_state(
+        pdf, total_batches=2, batch_size=20,
+    )
+    state = replace(
+        state,
+        completed_batches=[0],
+        batch_markdown={"0": "# Md cached (20 pages)\n"},
+    )
+    store.save(state)
+
+    # Mock render_pdf + OCR (non devono essere chiamati: il check deve
+    # fallire PRIMA dell'ingest).
+    monkeypatch.setattr(
+        "relictoepub.pipeline.render_pdf",
+        lambda *a, **kw: _fake_ingest_result(tmp_path, n_pages=10),
+    )
+
+    # Pipeline che tenta il resume con batch_size=5 (cambio di --pages-per-batch).
+    pipeline = Pipeline(
+        inference_config=InferenceConfig(pages_per_batch=5),
+        max_pages_per_batch=5,
+        eink_optimize=False,
+        metadata=BookMetadata(title="X"),
+        checkpoint_store=store,
+    )
+    with pytest.raises(CheckpointConfigMismatchError, match="pages-per-batch"):
+        list(pipeline.run_iter(pdf, tmp_path / "out.epub"))
+
+
+def test_pipeline_checkpoint_batch_size_match_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: se SHA combacia E batch_size combacia, il resume
+    funziona normalmente (nessun errore spurio)."""
+    pdf = tmp_path / "x.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nfake\n%%EOF\n")
+    n_pages = 4
+    n_calls = {"ocr": 0}
+
+    class CountingOCR:
+        def __init__(self, cfg: InferenceConfig) -> None:
+            pass
+
+        def run_batch_iter(self, paths):
+            n_calls["ocr"] += 1
+            yield "# Md\n", "running"
+            yield "# Md\n", "done"
+
+        @staticmethod
+        def _strip_image_tokens(text: str) -> str:
+            return text
+
+    monkeypatch.setattr(
+        "relictoepub.pipeline.UnlimitedOCRRunner", CountingOCR,
+    )
+    monkeypatch.setattr(
+        "relictoepub.pipeline.render_pdf",
+        lambda *a, **kw: _fake_ingest_result(tmp_path, n_pages=n_pages),
+    )
+
+    # Checkpoint con batch_size=2 e 1 batch cached su 2
+    store = CheckpointStore(resolve_checkpoint_dir(pdf))
+    state = new_checkpoint_state(
+        pdf, total_batches=2, batch_size=2,
+    )
+    state = replace(
+        state,
+        completed_batches=[0],
+        batch_markdown={"0": "# Md cached\n"},
+    )
+    store.save(state)
+
+    pipeline = Pipeline(
+        inference_config=InferenceConfig(pages_per_batch=2),
+        max_pages_per_batch=2,
+        eink_optimize=False,
+        metadata=BookMetadata(title="X"),
+        checkpoint_store=store,
+    )
+    list(pipeline.run_iter(pdf, tmp_path / "out.epub"))
+    # Solo il batch non cached deve aver chiamato OCR
+    assert n_calls["ocr"] == 1
+
+
+def test_checkpoint_config_mismatch_error_is_distinct_from_sha_mismatch() -> None:
+    """Le due eccezioni devono essere tipi distinti: una CLI che gestisce
+    ``CheckpointMismatchError`` non deve catturare per errore anche
+    ``CheckpointConfigMismatchError`` (e viceversa)."""
+    assert CheckpointConfigMismatchError is not CheckpointMismatchError
+    assert not issubclass(CheckpointConfigMismatchError, CheckpointMismatchError)
+    assert not issubclass(CheckpointMismatchError, CheckpointConfigMismatchError)

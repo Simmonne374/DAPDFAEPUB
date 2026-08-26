@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from relictoepub.checkpoint import (
+    CheckpointConfigMismatchError,
     CheckpointMismatchError,
     CheckpointState,
     CheckpointStore,
@@ -405,6 +406,21 @@ class Pipeline:
                         f"{existing.source_pdf_sha256[:20]}…). "
                         f"Usa --no-resume per forzare la riesecuzione "
                         f"oppure elimina {self.checkpoint_store.directory}."
+                    )
+                # B32: anche se lo SHA combacia, il checkpoint deve essere
+                # stato creato con lo stesso ``pages_per_batch``. Altrimenti
+                # il resume riusa markdown cached aggregato per N pagine
+                # come se fosse da M pagine → pagine mescolate nell'EPUB.
+                if existing.batch_size != self.max_pages_per_batch:
+                    raise CheckpointConfigMismatchError(
+                        f"Checkpoint presente ({self.checkpoint_store.path}) "
+                        f"è stato creato con --pages-per-batch="
+                        f"{existing.batch_size}, ma ora stai usando "
+                        f"{self.max_pages_per_batch}. Riusare il checkpoint "
+                        f"con un batch_size diverso mescola le pagine "
+                        f"cached senza nessun warning. Usa lo stesso "
+                        f"--pages-per-batch oppure --no-resume per "
+                        f"forzare la riesecuzione da zero."
                     )
                 checkpoint_state = existing
                 logger.info(
