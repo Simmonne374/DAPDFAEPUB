@@ -26,6 +26,7 @@ from relictoepub.checkpoint import CheckpointStore, resolve_checkpoint_dir
 from relictoepub.compile.build_epub import BookMetadata
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
 from relictoepub.pipeline import (
+    CheckpointConfigMismatchError,
     CheckpointMismatchError,
     ModelNotFoundError,
     Pipeline,
@@ -189,6 +190,9 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 130
     except CheckpointMismatchError as exc:
+        print(f"⚠️  {exc}", file=sys.stderr)
+        return 4
+    except CheckpointConfigMismatchError as exc:
         print(f"⚠️  {exc}", file=sys.stderr)
         return 4
     except ModelNotFoundError as exc:
