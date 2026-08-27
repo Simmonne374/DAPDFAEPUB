@@ -306,7 +306,7 @@ def test_pipeline_skip_cached_batches(
         def __init__(self, cfg: InferenceConfig) -> None:
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             n_calls["ocr"] += 1
             yield "# Md\nTest\n", "running"
             yield "# Md\nTest\n", "done"
@@ -361,7 +361,7 @@ def test_pipeline_no_checkpoint_no_resume(
         def __init__(self, cfg: InferenceConfig) -> None:
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             n_calls["ocr"] += 1
             yield "# Md\n", "running"
             yield "# Md\n", "done"
@@ -452,7 +452,7 @@ def test_pipeline_checkpoint_batch_size_match_resumes(
         def __init__(self, cfg: InferenceConfig) -> None:
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             n_calls["ocr"] += 1
             yield "# Md\n", "running"
             yield "# Md\n", "done"

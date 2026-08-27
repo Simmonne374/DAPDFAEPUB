@@ -53,10 +53,12 @@ class CancellableOCR:
         self._cancel = cancel_event
 
     def run_batch_iter(
-        self, image_paths,
+        self, image_paths, cancel_check=None,
     ) -> Iterator[tuple[str, str]]:
         for i in range(5):
             if self._cancel is not None and self._cancel.is_set():
+                return
+            if cancel_check is not None and cancel_check():
                 return
             yield f"# Batch {i}\nTesto {i}\n", "running"
         yield "# Final markdown\nDone\n", "done"
@@ -163,14 +165,18 @@ def test_cancel_before_first_batch_skips_ocr(
         def __init__(self, cfg):
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             n_calls["ocr"] += 1
             if ocr_cancel.is_set():
                 return  # cancel ricevuto prima ancora di iniziare
+            if cancel_check is not None and cancel_check():
+                return
             yield "# X", "running"
             # Delay realistico per simulare inferenza OCR in corso.
             time.sleep(0.05)
             if ocr_cancel.is_set():
+                return
+            if cancel_check is not None and cancel_check():
                 return
             yield "# X", "done"
 
@@ -238,8 +244,8 @@ def test_cancel_mid_pipeline_raises_after_batch_completes(
             # qui non abbiamo accesso diretto, usiamo un callback.
             self._after_first_batch_done: threading.Event = threading.Event()
 
-        def run_batch_iter(self, paths):
-            for partial in super().run_batch_iter(paths):
+        def run_batch_iter(self, paths, cancel_check=None):
+            for partial in super().run_batch_iter(paths, cancel_check=cancel_check):
                 if partial[1] == "done":
                     # Segnala "primo batch finito": il thread main
                     # imposterà il cancel_event.
@@ -253,7 +259,7 @@ def test_cancel_mid_pipeline_raises_after_batch_completes(
         def __init__(self, cfg):
             self.cfg = cfg
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             n_calls["ocr"] += 1
             # Primo batch: 5 yield running, poi done. Settiamo cancel_event
             # poco dopo per simulare utente che preme Stop.
@@ -323,7 +329,7 @@ def test_cancel_preserves_checkpoint_completed_batches(
         def __init__(self, cfg):
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             # Batch 0: emette "done" rapidamente, con un po' di delay
             yield "# B0 partial", "running"
             time.sleep(0.1)  # dà tempo al test di chiamare cancel()
@@ -405,7 +411,7 @@ def test_cancel_without_checkpoint_save_skips_persistence(
         def __init__(self, cfg):
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             n_calls["ocr"] += 1
             # Stesso pattern del test che funziona: yield + delay + done.
             # L'utente preme cancel DOPO che il batch 0 ha emesso done.
@@ -474,7 +480,7 @@ def test_pipeline_run_iter_does_not_auto_reset_cancel(
         def __init__(self, cfg):
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             n_calls["ocr"] += 1
             yield "# Md", "done"
 
@@ -543,7 +549,7 @@ def test_pipeline_run_iter_early_cancel_skips_render(
         def __init__(self, cfg):
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             ocr_called["n"] += 1
             yield "# Md", "done"
 
@@ -605,7 +611,7 @@ def test_cancel_emits_cancelling_phase_event(
         def __init__(self, cfg):
             pass
 
-        def run_batch_iter(self, paths):
+        def run_batch_iter(self, paths, cancel_check=None):
             yield "# A partial", "running"
             time.sleep(0.1)  # finestra per il watcher
             yield "# A partial", "running"

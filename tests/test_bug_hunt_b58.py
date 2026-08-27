@@ -65,7 +65,7 @@ class _LongCaptionRunner:
     def __init__(self, config: InferenceConfig) -> None:
         self.config = config
 
-    def run_batch_iter(self, image_paths):
+    def run_batch_iter(self, image_paths, cancel_check=None):
         yield self.DEFAULT_MARKDOWN, "running"
         yield self.DEFAULT_MARKDOWN, "done"
 
