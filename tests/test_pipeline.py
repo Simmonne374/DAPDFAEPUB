@@ -38,7 +38,7 @@ class FakeOCRRunner:
         self.config = config
         self._markdown = markdown if markdown is not None else self.DEFAULT_MARKDOWN
 
-    def run_batch_iter(self, image_paths):
+    def run_batch_iter(self, image_paths, cancel_check=None):
         """Replica la firma del runner reale: yield di (testo, status)."""
         yield self._markdown, "running"
         yield self._markdown, "done"

@@ -22,7 +22,7 @@ import logging
 import queue
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
 from relictoepub.inference.config import (
@@ -32,6 +32,20 @@ from relictoepub.inference.config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class OCRCancelledError(RuntimeError):
+    """Sollevata da :meth:`UnlimitedOCRRunner.run_batch_iter` quando il
+    ``cancel_check`` fornito dal chiamante diventa ``True`` durante
+    l'attesa su ``queue.get``.
+
+    È un'eccezione di basso livello, *non* parte del contratto pubblico:
+    la :class:`relictoepub.pipeline.Pipeline` la intercetta e la
+    converte in :class:`relictoepub.pipeline.PipelineCancelledError`,
+    che è il contratto visibile all'utente. Mantenere due eccezioni
+    separate evita l'accoppiamento circolare tra questo modulo e
+    ``pipeline.py`` (``pipeline`` importa già questo modulo).
+    """
 
 
 class _QueueWriter(io.TextIOBase):
@@ -174,13 +188,27 @@ class UnlimitedOCRRunner:
         """OCR di una singola pagina."""
         return self.run_batch([Path(image_path)])
 
-    def run_batch_iter(self, image_paths: Sequence[str | Path]) -> Iterator[tuple[str, str]]:
+    def run_batch_iter(
+        self,
+        image_paths: Sequence[str | Path],
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> Iterator[tuple[str, str]]:
         """Esegue l'OCR yielding del testo parziale in tempo reale (stream dei token).
 
         Il modello Unlimited-OCR scrive i suoi token grezzi su stdout;
         qui li catturiamo tramite ``contextlib.redirect_stdout``
         (thread-safe, non globale) instradandoli in una ``queue.Queue``,
         senza più manipolare ``sys.stdout`` manualmente.
+
+        Args:
+            image_paths: Pagine (file path) da passare al modello OCR.
+            cancel_check: Callback opzionale invocata ad ogni iterazione
+                del loop interno. Se ritorna ``True``, il loop esce
+                sollevando :class:`OCRCancelledError`. Default ``None``
+                (nessuna cancellazione cooperativa — backward compat).
+                La :class:`Pipeline` passa ``self.is_cancelled`` per
+                ottenere cancel reattivo entro una iterazione del
+                ``queue.get`` invece di attendere il timeout completo.
         """
         if not image_paths:
             yield "", "done"
@@ -233,16 +261,34 @@ class UnlimitedOCRRunner:
         thread.start()
 
         accumulated_text = ""
+        cancelled = False
         try:
             while thread.is_alive() or not q.empty():
+                # Cancel reattivo: prima di bloccarci su ``q.get``,
+                # controlliamo se il chiamante ha richiesto
+                # l'interruzione. Senza questo check (issue #38),
+                # ``q.get(timeout=0.1)`` può mascherare un cancel
+                # per fino a 100 ms. Con il check, l'uscita avviene
+                # alla prossima iterazione — quindi entro un timeout
+                # dal momento in cui ``cancel_check()`` ritorna True.
+                if cancel_check is not None and cancel_check():
+                    cancelled = True
+                    raise OCRCancelledError("OCR streaming cancelled by caller")
                 try:
-                    token = q.get(timeout=0.1)
+                    token = q.get(timeout=0.05)
                 except queue.Empty:
                     continue
                 accumulated_text += token
                 yield accumulated_text, "running"
         finally:
-            thread.join(timeout=1.0)
+            # Su cancel: non blocchiamo a lungo sul join. Il worker
+            # thread è daemon=True e verrà raccolto dal GC; qui usiamo
+            # un timeout breve (50 ms) per rilasciare risorse senza
+            # ritardare la risposta al chiamante. In caso di errore
+            # del modello, attendiamo comunque fino a 1 s per non
+            # perdere il traceback.
+            join_timeout = 0.05 if cancelled else 1.0
+            thread.join(timeout=join_timeout)
 
         if "error" in infer_exception:
             raise infer_exception["error"]

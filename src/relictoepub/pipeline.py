@@ -34,7 +34,7 @@ from relictoepub.checkpoint import (
 )
 from relictoepub.compile.build_epub import BookMetadata, build_epub
 from relictoepub.inference.config import InferenceConfig, QuantizationMode
-from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
+from relictoepub.inference.unlimited_ocr import OCRCancelledError, UnlimitedOCRRunner
 from relictoepub.ingest import IngestResult, render_pdf
 from relictoepub.postprocess.bbox_crop import (
     BBox,
@@ -547,7 +547,39 @@ class Pipeline:
             normalized_paths = [p.normalized_path for p in batch_pages]
 
             final_raw_text = ""
-            for partial_text, status in self._runner.run_batch_iter(normalized_paths):
+            try:
+                iter_stream = self._runner.run_batch_iter(
+                    normalized_paths,
+                    cancel_check=self.is_cancelled,
+                )
+            except OCRCancelledError:
+                # Cancel arrivato PRIMA del primo yield (worker ancora
+                # bloccato in ``infer()``): viene già alzato dal loop
+                # interno del runner. Mappiamo al contratto pubblico
+                # ``PipelineCancelledError`` emettendo prima l'evento
+                # ``cancelling`` per la UI, esattamente come il path
+                # normale post-yield.
+                completed_so_far = (
+                    len(checkpoint_state.completed_batches)
+                    if checkpoint_state is not None else 0
+                )
+                logger.info(
+                    "Cancel ricevuto durante OCR batch %d (catturato "
+                    "dal runner prima del primo yield). "
+                    "I batch %d..%d saranno saltati.",
+                    batch_idx, batch_idx,
+                    checkpoint_state.total_batches - 1 if checkpoint_state else 0,
+                )
+                yield ProgressEvent(
+                    phase="cancelling",
+                    message=(
+                        f"⏹️ Cancellazione ricevuta durante OCR batch "
+                        f"{batch_idx + 1}. Stop."
+                    ),
+                    extra={"cancelled": True, "completed_batches": completed_so_far},
+                )
+                raise PipelineCancelledError(completed_batches=completed_so_far) from None
+            for partial_text, status in iter_stream:
                 # Cancel check mid-batch: se l'utente preme Stop mentre
                 # l'inferenza sta girando, interrompi al prossimo token
                 # yielded. Più reattivo del check solo a inizio-batch.
