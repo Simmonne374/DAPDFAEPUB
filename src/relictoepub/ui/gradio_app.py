@@ -43,9 +43,10 @@ from relictoepub.ui.components import (
 logger = logging.getLogger(__name__)
 
 
-def _toggle_run_button(pdf_path: str | None) -> dict:
-    """Abilita la conversione solo quando Gradio fornisce un file PDF."""
-    return gr.update(interactive=bool(pdf_path))
+def _toggle_pdf_buttons(pdf_path: str | None) -> tuple[dict, dict]:
+    """Abilita i bottoni dipendenti dal PDF solo quando è presente."""
+    is_active = bool(pdf_path)
+    return gr.update(interactive=is_active), gr.update(interactive=is_active)
 
 
 def _inspect_checkpoint(pdf_path: str | None) -> str:
@@ -73,11 +74,14 @@ def _inspect_checkpoint(pdf_path: str | None) -> str:
 def _clear_checkpoint(pdf_path: str | None) -> str:
     """Cancella il checkpoint del PDF corrente. Ritorna stringa di feedback."""
     if not pdf_path:
+        gr.Warning("Seleziona prima un PDF.")
         return "⚠️ Seleziona prima un PDF."
     store = CheckpointStore(resolve_checkpoint_dir(Path(pdf_path)))
     if not store.exists():
+        gr.Info("Nessun checkpoint da cancellare per questo PDF.")
         return "ℹ️ Nessun checkpoint da cancellare."
     store.clear()
+    gr.Info("Checkpoint eliminato. La prossima conversione ripartirà da zero.")
     return "🗑️ Checkpoint eliminato. La prossima conversione ripartirà da zero."
 
 
@@ -388,6 +392,7 @@ def build_demo() -> gr.Blocks:
                             "🗑️ Pulisci checkpoint",
                             variant="stop",
                             size="sm",
+                            interactive=False,
                         )
                 with gr.Accordion("⚙️ Opzioni avanzate", open=False):
                     opts_rendered = [
@@ -421,9 +426,9 @@ def build_demo() -> gr.Blocks:
 
         # Wiring per abilitare il bottone di conversione solo quando un PDF è selezionato
         pdf_input.change(
-            fn=_toggle_run_button,
+            fn=_toggle_pdf_buttons,
             inputs=[pdf_input],
-            outputs=[run_btn],
+            outputs=[run_btn, clear_checkpoint_btn],
         )
         # Wiring per ispezione checkpoint al cambio PDF
         pdf_input.change(
