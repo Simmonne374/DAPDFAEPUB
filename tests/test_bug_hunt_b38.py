@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -41,7 +40,6 @@ from relictoepub.inference.unlimited_ocr import (
     UnlimitedOCRRunner,
     _QueueWriter,
 )
-
 
 # ---------------------------------------------------------------------
 # Fake model che simula ``Unlimited-OCR`` con un worker che NON emette
@@ -190,7 +188,7 @@ def test_b38_run_batch_iter_honors_cancel_within_one_iteration(
     )
 
     images = [Path("fake.png")]
-    t, _events, timestamps, exceptions = _consume_run_batch_iter(
+    t, _events, _timestamps, exceptions = _consume_run_batch_iter(
         runner, cancel_event, images,
     )
     t.start()
