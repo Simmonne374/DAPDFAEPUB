@@ -282,7 +282,7 @@ def test_b38_cancel_check_signature_backward_compatible(
 
     def _consume() -> None:
         for event in runner.run_batch_iter(images):
-            events.append(event)
+            events.append(event)  # noqa: PERF402
 
     t = threading.Thread(target=_consume, daemon=True)
     t.start()
