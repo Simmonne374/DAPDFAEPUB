@@ -7,3 +7,6 @@
 ## 2026-08-20 - Placeholder text vs Persistent Instructions
 **Learning:** Placeholders disappear when the user starts typing, making them unsuitable for persistent field-level instructions. The `info` property in Gradio is better suited for persistent instructions, while `placeholder` should strictly be used for formatting examples. Repeating the label in the placeholder is redundant.
 **Action:** Changed the `placeholder` for `title` and `author` inputs to provide formatting examples (e.g., "Es: Il Nome della Rosa") instead of repeating the field labels.
+## 2024-05-25 - Disabling actions dependent on input
+**Learning:** Actions that operate on user-provided inputs (such as clearing a cache for a specific uploaded file) can cause errors or confusion if triggered before the input is provided. The `gr.Button(interactive=False)` combined with dynamic state updates on `change` events ensures users understand when an action is available.
+**Action:** Always disable buttons that require a specific input (like a selected file) by default and enable them dynamically when the prerequisite input is provided using `gr.update(interactive=is_active)`.
