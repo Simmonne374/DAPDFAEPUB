@@ -36,8 +36,8 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 from typing import ClassVar
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -47,7 +47,6 @@ if str(LAUNCHER_DIR) not in sys.path:
     sys.path.insert(0, str(LAUNCHER_DIR))
 
 import gpu_bootstrap as gb
-
 
 # ---------------------------------------------------------------
 # Fixture: redirige LOCALAPPDATA su un tmp, in modo che
@@ -175,7 +174,7 @@ def test_b59_download_with_progress_logs_head_failure(
 
     class _FakeResp:
         status_code = 200
-            headers: ClassVar[dict] = {}
+        headers: ClassVar[dict] = {}
 
         def raise_for_status(self) -> None:
             return None
