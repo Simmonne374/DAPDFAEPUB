@@ -231,14 +231,19 @@ def _run_pipeline(
                 gr.update(interactive=False),
             )
 
-        # Copia il file temporaneo sicuro nella destinazione scelta
+        # Copia il file temporaneo sicuro nella destinazione scelta.
+        # B33: usa ``shutil.move`` (copy + unlink) per evitare di lasciare
+        # una copia orfana in %TEMP% ad ogni conversione andata a buon fine.
         final_dest_str = ""
+        # Cattura dimensione e path del file temporaneo PRIMA del move
+        # perché ``shutil.move`` rimuove il sorgente.
+        final_size_bytes = temp_output_epub.stat().st_size
         if output_dir.strip():
             try:
                 output_dir_path = Path(output_dir.strip())
                 output_dir_path.mkdir(parents=True, exist_ok=True)
                 final_dest_epub = output_dir_path / pdf_path_obj.with_suffix(".epub").name
-                shutil.copy(temp_output_epub, final_dest_epub)
+                shutil.move(temp_output_epub, final_dest_epub)
                 final_dest_str = f"\n📁 Copiato nella cartella di destinazione: {final_dest_epub}"
             except (OSError, shutil.SameFileError) as e:
                 gr.Warning(f"Impossibile copiare nella cartella di destinazione: {e}")
@@ -246,22 +251,24 @@ def _run_pipeline(
         else:
             try:
                 final_dest_epub = pdf_path_obj.with_suffix(".epub")
-                shutil.copy(temp_output_epub, final_dest_epub)
+                shutil.move(temp_output_epub, final_dest_epub)
                 final_dest_str = f"\n📁 Salvato in: {final_dest_epub}"
             except (OSError, shutil.SameFileError) as e:
                 gr.Warning(f"Impossibile salvare nella cartella del PDF: {e}")
                 final_dest_str = f"\n⚠️ Impossibile salvare nella cartella del PDF: {e}"
 
         # Evento finale: aggiungi riepilogo e abilita il download
+        # B33: usa la dimensione catturata prima del move e punta il
+        # download all'EPUB finale nella destinazione scelta dall'utente.
         summary = (
             f"\n\n✅ EPUB pronto!"
             f"{final_dest_str}"
-            f"\n📁 Dimensione: {temp_output_epub.stat().st_size / 1024:.1f} KB"
+            f"\n📁 Dimensione: {final_size_bytes / 1024:.1f} KB"
         )
         base_log_text = (base_log_text + summary).strip()
         gr.Info("Conversione EPUB completata con successo!")
         yield (
-            base_log_text, gallery, str(temp_output_epub),
+            base_log_text, gallery, str(final_dest_epub),
             check_model_status()[1],
             None,  # pipeline_state → reset per prossima run
             gr.update(value="⏹️ Stop", interactive=False),
