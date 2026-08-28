@@ -68,7 +68,7 @@ def _make_fake_pipeline(filled_bytes: bytes = b"PK\x03\x04" + b"x" * (100 * 1024
     mock_event.message = "Fatto"
     mock_event.extra = {}
 
-    def _run_iter_side_effect(pdf_path_obj_arg, output_epub_arg):  # noqa: ARG001
+    def _run_iter_side_effect(_pdf_path_obj_arg, output_epub_arg):
         """Generator function: scrive il finto EPUB e poi yield mock_event."""
         temp_path = Path(output_epub_arg)
         state["captured_temp_path"] = temp_path
@@ -123,7 +123,7 @@ def test_run_pipeline_removes_temp_epub_on_success(
         )
 
         # La pipeline mock completa con successo; nessuna eccezione attesa.
-        results = list(generator)
+        list(generator)
 
     captured = state["captured_temp_path"]
     assert captured is not None, "Pipeline mock non ha catturato il path del tempfile"
@@ -217,7 +217,7 @@ def test_run_pipeline_removes_temp_epub_on_pipeline_cancelled(
 
     state: dict = {"captured_temp_path": None}
 
-    def _run_iter_side_effect(pdf_path_obj_arg, output_epub_arg):  # noqa: ARG001
+    def _run_iter_side_effect(_pdf_path_obj_arg, output_epub_arg):
         temp_path = Path(output_epub_arg)
         state["captured_temp_path"] = temp_path
         temp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -273,7 +273,7 @@ def test_run_pipeline_removes_temp_epub_on_pipeline_error(
 
     state: dict = {"captured_temp_path": None}
 
-    def _run_iter_side_effect(pdf_path_obj_arg, output_epub_arg):  # noqa: ARG001
+    def _run_iter_side_effect(_pdf_path_obj_arg, output_epub_arg):
         temp_path = Path(output_epub_arg)
         state["captured_temp_path"] = temp_path
         temp_path.parent.mkdir(parents=True, exist_ok=True)
