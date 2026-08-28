@@ -37,6 +37,7 @@ import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
+from typing import ClassVar
 
 import pytest
 
@@ -45,7 +46,7 @@ LAUNCHER_DIR = Path(__file__).resolve().parent.parent / "build" / "launchers"
 if str(LAUNCHER_DIR) not in sys.path:
     sys.path.insert(0, str(LAUNCHER_DIR))
 
-import gpu_bootstrap as gb  # noqa: E402
+import gpu_bootstrap as gb
 
 
 # ---------------------------------------------------------------
@@ -174,7 +175,7 @@ def test_b59_download_with_progress_logs_head_failure(
 
     class _FakeResp:
         status_code = 200
-        headers: dict = {}
+            headers: ClassVar[dict] = {}
 
         def raise_for_status(self) -> None:
             return None
