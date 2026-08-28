@@ -107,26 +107,36 @@ def get_gpu_info_via_smi() -> dict | None:
                 info["compute_cap"] = parse_compute_cap(first[1])
                 info["driver_version"] = first[2].strip()
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
 
     # 2) pynvml / nvidia-ml-py per arricchire (cuDNN, memorie, ecc.)
-        try:
-            # Il package su PyPI è "nvidia-ml-py3" (rinominato da "pynvml") ma
-            # esporta lo stesso modulo Python `pynvml` per retrocompatibilità.
-            import pynvml  # type: ignore
+    try:
+        # Il package su PyPI è "nvidia-ml-py3" (rinominato da "pynvml") ma
+        # esporta lo stesso modulo Python `pynvml` per retrocompatibilità.
+        import pynvml  # type: ignore
 
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            if "name" not in info:
-                info["name"] = pynvml.nvmlDeviceGetName(handle).decode("utf-8", errors="replace")
-            if "driver_version" not in info:
-                info["driver_version"] = pynvml.nvmlSystemGetDriverVersion().decode(
-                    "utf-8", errors="replace"
-                )
-            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            info["memory_total_mb"] = int(mem.total / (1024 * 1024))
-            pynvml.nvmlShutdown()
-        except Exception:  # noqa: BLE001
-            pass
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        if "name" not in info:
+            info["name"] = pynvml.nvmlDeviceGetName(handle).decode("utf-8", errors="replace")
+        if "driver_version" not in info:
+            info["driver_version"] = pynvml.nvmlSystemGetDriverVersion().decode(
+                "utf-8", errors="replace"
+            )
+        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        info["memory_total_mb"] = int(mem.total / (1024 * 1024))
+        pynvml.nvmlShutdown()
+    except Exception as nvml_exc:  # noqa: BLE001 - pynvml alza eccezioni eterogenee
+        # B59 (issue #28): non ingoiare più l'errore silenziosamente.
+        # Logga il tipo + messaggio in launcher_selfcheck.log per dare
+        # allo sviluppatore una traccia del perché memory_total_mb
+        # (o name/driver_version) manca. Bug Python veri e propri
+        # (NameError, ImportError, …) rientrano in nvml_exc e vengono
+        # loggati, non rilanciati: il detect di base (compute_cap da
+        # nvidia-smi) ha già successo, quindi proseguire è corretto.
+        _log_selfcheck(
+            f"pynvml enrich fallito ({type(nvml_exc).__name__}: {nvml_exc})"
+        )
 
     return info if info.get("compute_cap") else None
 
@@ -200,8 +210,26 @@ def download_with_progress(url: str, dest: Path, state: ProgressState, *, timeou
             cl = head.headers.get("content-length")
             if cl:
                 expected_total = int(cl)
-    except Exception:
-        pass
+    except requests.exceptions.RequestException as head_exc:
+        # B59 (issue #28): la HEAD preliminare può fallire per problemi di
+        # rete (DNS, mirror offline, proxy). È previsto e recuperabile
+        # (il download vero riproverà con il GET), ma ora lasciamo una
+        # riga diagnostica invece di ingoiare l'eccezione.
+        _log_selfcheck(
+            f"download HEAD preliminare fallita per {url} "
+            f"({type(head_exc).__name__}: {head_exc}); "
+            f"procedo senza Content-Length attesa"
+        )
+    except Exception as head_exc:  # noqa: BLE001 - difesa contro bug inattesi
+        # Bug Python vero (es. ValueError su header malformato, AttributeError
+        # su risposta malformata): logga + rilancia NON è sicuro qui perché
+        # interromperemmo il download con uno stack trace sullo splash Tk.
+        # Logghiamo e proseguiamo: il GET principale riprova la connessione
+        # e produrrà un errore più mirato nel caso peggiore.
+        _log_selfcheck(
+            f"download HEAD preliminare errore inatteso per {url} "
+            f"({type(head_exc).__name__}: {head_exc})"
+        )
 
     # Se il file locale è già completo (>= dimensione attesa), salta download
     if expected_total > 0 and downloaded >= expected_total:
