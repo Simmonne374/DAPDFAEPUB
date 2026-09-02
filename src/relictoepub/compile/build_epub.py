@@ -81,6 +81,10 @@ _HEADING_PATTERN = re.compile(
 _H1_PATTERN = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 _H2_PATTERN = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 
+# Bolt optimization: Hoisted pre-compiled regex patterns for responsive image injection.
+_IMG_TAG_PATTERN = re.compile(r"<img([^>]*?)(/?)>")
+_STYLE_ATTR_PATTERN = re.compile(r"""style\s*=\s*("([^"]*)"|'([^']*)')""")
+
 
 def _split_on_pattern(
     markdown: str, pattern: re.Pattern[str]
@@ -322,8 +326,8 @@ def _inject_responsive_images(html: str) -> str:
     un secondo attributo ``style=`` (XHTML strict vieta attributi duplicati
     e gli EpubCheck rifiutano l'EPUB in quel caso).
     """
-    pattern = re.compile(r"<img([^>]*?)(/?)>")
-    style_attr_re = re.compile(r"""style\s*=\s*("([^"]*)"|'([^']*)')""")
+    if "<img" not in html:
+        return html
 
     # Regole responsive da garantire su ogni <img>.
     _RESPONSIVE_RULES = ("max-width:100%", "height:auto", "display:block", "margin:1em auto")
@@ -361,7 +365,7 @@ def _inject_responsive_images(html: str) -> str:
         # Se è già presente un attributo ``style="..."`` fondiamolo
         # con le regole responsive (preservando quelle dell'utente).
         # Altrimenti aggiungiamo un nuovo ``style="..."``.
-        style_match = style_attr_re.search(attrs)
+        style_match = _STYLE_ATTR_PATTERN.search(attrs)
         if style_match is not None:
             existing_css = style_match.group(2) or style_match.group(3) or ""
             new_css = _ensure_responsive_css(existing_css)
@@ -386,7 +390,7 @@ def _inject_responsive_images(html: str) -> str:
             return f"<img {attrs} {is_self_closing}>"
         return f"<img {is_self_closing}>"
 
-    return pattern.sub(repl, html)
+    return _IMG_TAG_PATTERN.sub(repl, html)
 
 
 def _add_cover_page(chapters: list[ChapterInfo], cover_image: Path | None) -> list[ChapterInfo]:
