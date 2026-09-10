@@ -44,9 +44,17 @@ logger = logging.getLogger(__name__)
 
 
 def _toggle_pdf_buttons(pdf_path: str | None) -> tuple[dict, dict]:
-    """Abilita i bottoni dipendenti dal PDF solo quando è presente."""
+    """Abilita i bottoni dipendenti dal PDF solo quando è presente e mostra testo dinamico."""
     is_active = bool(pdf_path)
-    return gr.update(interactive=is_active), gr.update(interactive=is_active)
+    if is_active:
+        return (
+            gr.update(interactive=True, value="🚀 Converti in EPUB"),
+            gr.update(interactive=True, value="🗑️ Pulisci checkpoint")
+        )
+    return (
+        gr.update(interactive=False, value="🚀 Seleziona un PDF per convertire"),
+        gr.update(interactive=False, value="🗑️ Seleziona un PDF per pulire il checkpoint")
+    )
 
 
 def _inspect_checkpoint(pdf_path: str | None) -> str:
@@ -134,7 +142,7 @@ def _run_pipeline(
 
     if pdf_path is None:
         gr.Warning("Nessun PDF selezionato.")
-        yield "❌ Nessun PDF selezionato.", gallery, None, gr.update(), None, gr.update(), gr.update()
+        yield "❌ Nessun PDF selezionato.", gallery, None, gr.update(), None, gr.update(), gr.update(value="🚀 Converti in EPUB")
         return
 
     gr.Info("Avvio conversione del PDF, attendere prego...")
@@ -143,7 +151,7 @@ def _run_pipeline(
         gr.Warning("File non valido.")
         yield (
             f"❌ File non valido: {pdf_path}", gallery, None, gr.update(),
-            None, gr.update(), gr.update(),
+            None, gr.update(), gr.update(value="🚀 Converti in EPUB"),
         )
         return
 
@@ -228,7 +236,7 @@ def _run_pipeline(
                 log_to_show, gallery, None, gr.update(),
                 pipeline, gr.update(value="⏹️ Stop", interactive=True),
                 # BUG #11: disabilita run_btn durante l'esecuzione.
-                gr.update(interactive=False),
+                gr.update(interactive=False, value="⏳ Conversione in corso..."),
             )
 
         # Copia il file temporaneo sicuro nella destinazione scelta.
@@ -273,7 +281,7 @@ def _run_pipeline(
             None,  # pipeline_state → reset per prossima run
             gr.update(value="⏹️ Stop", interactive=False),
             # BUG #11: ri-abilita il pulsante Converti.
-            gr.update(interactive=True),
+            gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
     except PipelineCancelledError as exc:
         msg = (
@@ -294,7 +302,7 @@ def _run_pipeline(
             gr.update(),
             None,  # reset pipeline_state
             gr.update(value="⏹️ Stop", interactive=False),
-            gr.update(interactive=True),
+            gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
     except (RuntimeError, ValueError, OSError, ImportError, TimeoutError) as exc:
         # BUG #10: cleanup tempfile anche su errori generici.
@@ -310,7 +318,7 @@ def _run_pipeline(
             gr.update(),
             None,
             gr.update(value="⏹️ Stop", interactive=False),
-            gr.update(interactive=True),
+            gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
         raise gr.Error(f"Errore durante la conversione: {exc}") from exc
 
@@ -396,7 +404,7 @@ def build_demo() -> gr.Blocks:
                             info="Se presente, salta le pagine già OCR-ate.",
                         )
                         clear_checkpoint_btn = gr.Button(
-                            "🗑️ Pulisci checkpoint",
+                            "🗑️ Seleziona un PDF per pulire il checkpoint",
                             variant="stop",
                             size="sm",
                             interactive=False,
@@ -413,7 +421,7 @@ def build_demo() -> gr.Blocks:
                     opts["title"].render()
                     opts["author"].render()
 
-                run_btn = gr.Button("🚀 Converti in EPUB", variant="primary", size="lg", interactive=False)
+                run_btn = gr.Button("🚀 Seleziona un PDF per convertire", variant="primary", size="lg", interactive=False)
                 stop_btn = gr.Button(
                     "⏹️ Stop",
                     variant="stop",
