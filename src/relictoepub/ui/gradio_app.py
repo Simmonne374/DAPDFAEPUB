@@ -44,16 +44,13 @@ logger = logging.getLogger(__name__)
 
 
 def _toggle_pdf_buttons(pdf_path: str | None) -> tuple[dict, dict]:
-    """Abilita i bottoni dipendenti dal PDF solo quando è presente e mostra testo dinamico."""
+    """Abilita i bottoni dipendenti dal PDF solo quando è presente."""
     is_active = bool(pdf_path)
-    if is_active:
-        return (
-            gr.update(interactive=True, value="🚀 Converti in EPUB"),
-            gr.update(interactive=True, value="🗑️ Pulisci checkpoint")
-        )
+    run_btn_value = "🚀 Converti in EPUB" if is_active else "📄 Seleziona un PDF per convertire"
+    clear_btn_value = "🗑️ Pulisci checkpoint" if is_active else "🗑️ Seleziona un PDF per pulire il checkpoint"
     return (
-        gr.update(interactive=False, value="🚀 Seleziona un PDF per convertire"),
-        gr.update(interactive=False, value="🗑️ Seleziona un PDF per pulire il checkpoint")
+        gr.update(interactive=is_active, value=run_btn_value),
+        gr.update(interactive=is_active, value=clear_btn_value),
     )
 
 
@@ -142,7 +139,7 @@ def _run_pipeline(
 
     if pdf_path is None:
         gr.Warning("Nessun PDF selezionato.")
-        yield "❌ Nessun PDF selezionato.", gallery, None, gr.update(), None, gr.update(), gr.update(value="🚀 Converti in EPUB")
+        yield "❌ Nessun PDF selezionato.", gallery, None, gr.update(), None, gr.update(), gr.update()
         return
 
     gr.Info("Avvio conversione del PDF, attendere prego...")
@@ -151,7 +148,7 @@ def _run_pipeline(
         gr.Warning("File non valido.")
         yield (
             f"❌ File non valido: {pdf_path}", gallery, None, gr.update(),
-            None, gr.update(), gr.update(value="🚀 Converti in EPUB"),
+            None, gr.update(), gr.update(),
         )
         return
 
@@ -421,7 +418,7 @@ def build_demo() -> gr.Blocks:
                     opts["title"].render()
                     opts["author"].render()
 
-                run_btn = gr.Button("🚀 Seleziona un PDF per convertire", variant="primary", size="lg", interactive=False)
+                run_btn = gr.Button("📄 Seleziona un PDF per convertire", variant="primary", size="lg", interactive=False)
                 stop_btn = gr.Button(
                     "⏹️ Stop",
                     variant="stop",
