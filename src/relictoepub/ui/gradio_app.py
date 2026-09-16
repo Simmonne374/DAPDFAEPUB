@@ -46,7 +46,8 @@ logger = logging.getLogger(__name__)
 def _toggle_pdf_buttons(pdf_path: str | None) -> tuple[dict, dict]:
     """Abilita i bottoni dipendenti dal PDF solo quando è presente."""
     is_active = bool(pdf_path)
-    return gr.update(interactive=is_active), gr.update(interactive=is_active)
+    run_btn_value = "🚀 Converti in EPUB" if is_active else "📄 Seleziona un PDF per convertire"
+    return gr.update(interactive=is_active, value=run_btn_value), gr.update(interactive=is_active)
 
 
 def _inspect_checkpoint(pdf_path: str | None) -> str:
@@ -413,7 +414,7 @@ def build_demo() -> gr.Blocks:
                     opts["title"].render()
                     opts["author"].render()
 
-                run_btn = gr.Button("🚀 Converti in EPUB", variant="primary", size="lg", interactive=False)
+                run_btn = gr.Button("📄 Seleziona un PDF per convertire", variant="primary", size="lg", interactive=False)
                 stop_btn = gr.Button(
                     "⏹️ Stop",
                     variant="stop",
