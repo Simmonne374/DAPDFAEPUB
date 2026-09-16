@@ -47,7 +47,11 @@ def _toggle_pdf_buttons(pdf_path: str | None) -> tuple[dict, dict]:
     """Abilita i bottoni dipendenti dal PDF solo quando è presente."""
     is_active = bool(pdf_path)
     run_btn_value = "🚀 Converti in EPUB" if is_active else "📄 Seleziona un PDF per convertire"
-    return gr.update(interactive=is_active, value=run_btn_value), gr.update(interactive=is_active)
+    clear_btn_value = "🗑️ Pulisci checkpoint" if is_active else "🗑️ Seleziona un PDF per pulire il checkpoint"
+    return (
+        gr.update(interactive=is_active, value=run_btn_value),
+        gr.update(interactive=is_active, value=clear_btn_value),
+    )
 
 
 def _inspect_checkpoint(pdf_path: str | None) -> str:
@@ -229,7 +233,7 @@ def _run_pipeline(
                 log_to_show, gallery, None, gr.update(),
                 pipeline, gr.update(value="⏹️ Stop", interactive=True),
                 # BUG #11: disabilita run_btn durante l'esecuzione.
-                gr.update(interactive=False),
+                gr.update(interactive=False, value="⏳ Conversione in corso..."),
             )
 
         # Copia il file temporaneo sicuro nella destinazione scelta.
@@ -274,7 +278,7 @@ def _run_pipeline(
             None,  # pipeline_state → reset per prossima run
             gr.update(value="⏹️ Stop", interactive=False),
             # BUG #11: ri-abilita il pulsante Converti.
-            gr.update(interactive=True),
+            gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
     except PipelineCancelledError as exc:
         msg = (
@@ -295,7 +299,7 @@ def _run_pipeline(
             gr.update(),
             None,  # reset pipeline_state
             gr.update(value="⏹️ Stop", interactive=False),
-            gr.update(interactive=True),
+            gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
     except (RuntimeError, ValueError, OSError, ImportError, TimeoutError) as exc:
         # BUG #10: cleanup tempfile anche su errori generici.
@@ -311,7 +315,7 @@ def _run_pipeline(
             gr.update(),
             None,
             gr.update(value="⏹️ Stop", interactive=False),
-            gr.update(interactive=True),
+            gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
         raise gr.Error(f"Errore durante la conversione: {exc}") from exc
 
@@ -397,7 +401,7 @@ def build_demo() -> gr.Blocks:
                             info="Se presente, salta le pagine già OCR-ate.",
                         )
                         clear_checkpoint_btn = gr.Button(
-                            "🗑️ Pulisci checkpoint",
+                            "🗑️ Seleziona un PDF per pulire il checkpoint",
                             variant="stop",
                             size="sm",
                             interactive=False,
