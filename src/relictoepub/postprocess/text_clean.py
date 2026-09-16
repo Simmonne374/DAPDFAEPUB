@@ -54,12 +54,14 @@ _B39_PLACEHOLDER_SUFFIX = "\x00"
 _TYPOGRAPHIC_QUOTES = re.compile(r"[‘’`´]")  # solo la serie "left-single + backtick"
 _TYPOGRAPHIC_QUOTES_DOUBLE = re.compile(r"[“”«»]")
 
-# Spaziature multiple e tag residui
+# Spaziature multiple
 _MULTI_NEWLINE = re.compile(r"\n{3,}")
 _TRAILING_WHITESPACE = re.compile(r"[ \t]+\n")
-_SINGLE_NEWLINE = re.compile(r"(?<=\S)\n(?=\S)")
-_DET_RESIDUAL_TAG = re.compile(r"<\|det\|>[^\n]*?\[.*?\][^\n]*?<\|/det\|>")
-_BBOX_RESIDUAL_TAG = re.compile(r"<\|bbox\|[^\n]*?\|>")
+
+# Bolt optimization: Hoisted pre-compiled regex patterns & fast-path triggers for clean_text.
+_INLINE_NEWLINE = re.compile(r"(?<=\S)\n(?=\S)")
+_CLEAN_DET = re.compile(r"<\|det\|>[^\n]*?\[.*?\][^\n]*?<\|/det\|>")
+_CLEAN_BBOX = re.compile(r"<\|bbox\|[^\n]*?\|>")
 
 
 def clean_text(text: str, *, fix_hyphenation: bool = True, normalize_quotes: bool = True) -> str:
@@ -111,17 +113,16 @@ def clean_text(text: str, *, fix_hyphenation: bool = True, normalize_quotes: boo
         text = _END_OF_LINE_HYPHEN.sub("", text)
         # Caso 2: "parola \n cont" su righe molto corte → mantengo il
         # newline come singolo spazio, pypandoc gestirà la spaziatura
-        text = _SINGLE_NEWLINE.sub(" ", text)
+        text = _INLINE_NEWLINE.sub(" ", text)
 
     # Rimuovi tag di det/bbox residui (difesa). La pipeline ``pipeline.py``
     # consuma già tutti i tag ``<|det|>...<|/det|>`` noti prima di invocare
     # ``clean_text``; queste regex sono un safety-net per tag malformati
-    # sfuggiti al parser. ``[^\n]*?`` impedisce al ``.*?`` di mangiare più
-    # righe (caso in cui mancherebbe il ``<|/det|>`` di chiusura).
+    # sfuggiti al parser. Fast-path: evita l'esecuzione di regex se non presenti.
     if "<|det|>" in text:
-        text = _DET_RESIDUAL_TAG.sub("", text)
+        text = _CLEAN_DET.sub("", text)
     if "<|bbox|" in text:
-        text = _BBOX_RESIDUAL_TAG.sub("", text)
+        text = _CLEAN_BBOX.sub("", text)
 
     # Collassa 3+ newline in 2 (per separare i paragrafi in Markdown)
     text = _MULTI_NEWLINE.sub("\n\n", text)
