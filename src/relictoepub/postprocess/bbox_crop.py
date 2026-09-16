@@ -90,21 +90,15 @@ class BBox:
     @classmethod
     def from_string(cls, raw: str) -> BBox:
         """Parsa una stringa tipo "<|det|>label [x1, y1, x2, y2]<|/det|>" o "<|bbox|...>"."""
-        match = re.search(
-            r"<\|det\|>([^\[]+)\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]<\|/det\|>",
-            raw
-        )
+        match = _DET_PATTERN.search(raw)
         if not match:
-            match = re.search(
-                r"<\|bbox\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*(?:\|\s*([^|>\s]+)\s*)?\|?>",
-                raw,
-            )
+            match = _BBOX_PATTERN.search(raw)
             if not match:
                 raise ValueError(f"Formato BBox non riconosciuto: {raw!r}")
             x1, y1, x2, y2 = (int(g) for g in match.groups()[:4])
             label = (match.group(5) or "").strip()
             return cls(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label)
-            
+
         label = match.group(1).strip()
         x1, y1, x2, y2 = (int(g) for g in match.groups()[1:5])
         return cls(x_min=x1, y_min=y1, x_max=x2, y_max=y2, label=label)
