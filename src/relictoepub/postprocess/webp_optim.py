@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PIL import Image, ImageEnhance, ImageOps
@@ -97,25 +98,39 @@ def optimize_for_eink(
 def optimize_batch(
     image_paths: Iterable[str | Path],
     output_dir: str | Path,
+    *,
+    max_workers: int | None = None,
     **kwargs,
 ) -> list[Path]:
-    """Ottimizza una serie di immagini, salvandole in ``output_dir``.
+    """Ottimizza una serie di immagini in parallelo, salvandole in ``output_dir``.
 
     Args:
         image_paths: Iterabile di path sorgente.
         output_dir: Cartella di destinazione (verrà creata).
+        max_workers: Numero massimo di thread worker per l'ottimizzazione
+            in parallelo. Se ``None``, usa la configurazione di default
+            di :class:`ThreadPoolExecutor`.
         **kwargs: Parametri passati a :func:`optimize_for_eink`.
 
     Returns:
-        Lista dei file WebP generati.
+        Lista dei file WebP generati nell'ordine originale di ``image_paths``.
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    results: list[Path] = []
-    for path in image_paths:
-        path = Path(path)
+    paths_list = [Path(p) for p in image_paths]
+    if not paths_list:
+        return []
+
+    # Helper function executed per image in thread pool
+    def _worker(path: Path) -> Path:
         target = out / (path.stem + ".webp")
-        results.append(optimize_for_eink(path, target, **kwargs))
+        return optimize_for_eink(path, target, **kwargs)
+
+    # ThreadPoolExecutor is highly effective here because libwebp and Pillow C extensions
+    # release the GIL during heavy image filtering and WEBP compression.
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(_worker, paths_list))
+
     return results
 
 
