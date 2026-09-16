@@ -81,9 +81,13 @@ _HEADING_PATTERN = re.compile(
 _H1_PATTERN = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 _H2_PATTERN = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 
-# Bolt optimization: Hoisted pre-compiled regex patterns for responsive image injection.
-_IMG_TAG_PATTERN = re.compile(r"<img([^>]*?)(/?)>")
-_STYLE_ATTR_PATTERN = re.compile(r"""style\s*=\s*("([^"]*)"|'([^']*)')""")
+# Bolt optimizations: hoisted pre-compiled regexes and CSS rules for XHTML processing
+_IMG_PATTERN = re.compile(r"<img([^>]*?)(/?)>")
+_STYLE_ATTR_RE = re.compile(r"""style\s*=\s*("([^"]*)"|'([^']*)')""")
+_RESPONSIVE_RULES = ("max-width:100%", "height:auto", "display:block", "margin:1em auto")
+_DEFAULT_RESPONSIVE_STYLE = f'style="{"; ".join(_RESPONSIVE_RULES)}"'
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_H1_TAG_RE = re.compile(r"<h1\b")
 
 
 def _split_on_pattern(
@@ -265,16 +269,16 @@ def _chapter_xhtml(title: str, body_markdown: str, level: int) -> str:
             # preservando il rendering interno (es. <strong>, <em>, <code>).
             full_md = f"# {title}\n\n{body_markdown}"
             body_fragment = _convert_markdown_to_xhtml(full_md)
-            body_fragment = re.sub(
-                r"<h1\b",
-                '<h1 class="chapter-title"',
-                body_fragment,
-                count=1,
-            )
+            if "<h1" in body_fragment:
+                body_fragment = _H1_TAG_RE.sub(
+                    '<h1 class="chapter-title"',
+                    body_fragment,
+                    count=1,
+                )
     else:
         body_fragment = _convert_markdown_to_xhtml(body_markdown)
     # Testo del <title> EPUB: testo plain, fallback "Chapter" se vuoto.
-    title_text = re.sub(r"<[^>]+>", "", title) if title else ""
+    title_text = _HTML_TAG_RE.sub("", title) if (title and "<" in title) else (title or "")
     title_text = title_text.strip() or "Chapter"
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -319,6 +323,22 @@ def _xml_escape(text: str) -> str:
     )
 
 
+def _ensure_responsive_css(existing: str) -> str:
+    """Ritorna la stringa di dichiarazioni CSS garantendo le regole responsive.
+
+    - Rispetta l'ordine delle regole già presenti.
+    - Aggiunge in coda solo le regole mancanti (idempotente sulle singole regole).
+    - Non tocca regole definite dall'utente (es. ``width:50.0%`` viene preservata).
+    """
+    existing_rules = [r.strip() for r in existing.split(";") if r.strip()]
+    existing_lower = {r.lower() for r in existing_rules}
+    merged = list(existing_rules)
+    for rule in _RESPONSIVE_RULES:
+        if rule.lower() not in existing_lower:
+            merged.append(rule)
+    return "; ".join(merged)
+
+
 def _inject_responsive_images(html: str) -> str:
     """Aggiunge ``max-width:100%; height:auto`` a tutti i ``<img>`` emessi in modo XML-compliant.
 
@@ -326,52 +346,23 @@ def _inject_responsive_images(html: str) -> str:
     un secondo attributo ``style=`` (XHTML strict vieta attributi duplicati
     e gli EpubCheck rifiutano l'EPUB in quel caso).
     """
+    # Bolt optimization: Fast path if no image tags are in the HTML
     if "<img" not in html:
         return html
 
-    # Regole responsive da garantire su ogni <img>.
-    _RESPONSIVE_RULES = ("max-width:100%", "height:auto", "display:block", "margin:1em auto")
-
-    def _ensure_responsive_css(existing: str) -> str:
-        """Ritorna la stringa di dichiarazioni CSS garantendo le regole responsive.
-
-        - Rispetta l'ordine delle regole già presenti.
-        - Aggiunge in coda solo le regole mancanti (idempotente sulle singole regole).
-        - Non tocca regole definite dall'utente (es. ``width:50.0%`` viene preservata).
-        """
-        # Split per ``;`` rimuovendo voci vuote; teniamo l'ordine originale.
-        existing_rules = [r.strip() for r in existing.split(";") if r.strip()]
-        existing_lower = {r.lower() for r in existing_rules}
-        merged = list(existing_rules)
-        for rule in _RESPONSIVE_RULES:
-            if rule.lower() not in existing_lower:
-                merged.append(rule)
-        return "; ".join(merged)
-
     def repl(m):
-        # ``strip()`` rimuove gli spazi leading/trailing lasciati dal
-        # match ``<img[^>]*?>`` (pandoc emette sempre ``<img ... />`` con
-        # spazio prima di ``/>``). Senza questo strip, l'f-string
-        # ``f"<img {attrs} {is_self_closing}>"`` produrrebbe ``<img  ...``
-        # con doppio spazio (BUG B54).
         attrs = m.group(1).strip()
         is_self_closing = m.group(2) or "/"
 
-        # Normalizza ``<img ... />`` (self-closing inline senza spazio prima di /).
         if attrs.endswith("/"):
             attrs = attrs[:-1].rstrip()
             is_self_closing = "/"
 
-        # Se è già presente un attributo ``style="..."`` fondiamolo
-        # con le regole responsive (preservando quelle dell'utente).
-        # Altrimenti aggiungiamo un nuovo ``style="..."``.
-        style_match = _STYLE_ATTR_PATTERN.search(attrs)
+        style_match = _STYLE_ATTR_RE.search(attrs)
         if style_match is not None:
             existing_css = style_match.group(2) or style_match.group(3) or ""
             new_css = _ensure_responsive_css(existing_css)
             if new_css == existing_css:
-                # Già completo e idempotente: restituiamo il tag originale
-                # invariato (XHTML-safe, nessuna modifica).
                 return m.group(0)
             attrs = (
                 attrs[: style_match.start()]
@@ -379,18 +370,13 @@ def _inject_responsive_images(html: str) -> str:
                 + attrs[style_match.end():]
             )
         else:
-            # Nessuno style pre-esistente: aggiungiamone uno completo.
-            # Gestisce il caso ``attrs`` vuoto (``<img/>`` / ``<img />``)
-            # evitando lo spazio extra prima di ``style=``.
-            new_style = f'style="{"; ".join(_RESPONSIVE_RULES)}"'
-            attrs = f"{attrs} {new_style}".strip()
+            attrs = f"{attrs} {_DEFAULT_RESPONSIVE_STYLE}".strip() if attrs else _DEFAULT_RESPONSIVE_STYLE
 
-        # Costruisci il tag finale, evitando spazi doppi quando ``attrs`` è vuoto.
         if attrs:
             return f"<img {attrs} {is_self_closing}>"
         return f"<img {is_self_closing}>"
 
-    return _IMG_TAG_PATTERN.sub(repl, html)
+    return _IMG_PATTERN.sub(repl, html)
 
 
 def _add_cover_page(chapters: list[ChapterInfo], cover_image: Path | None) -> list[ChapterInfo]:

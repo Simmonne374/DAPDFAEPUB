@@ -90,9 +90,9 @@ class BBox:
     @classmethod
     def from_string(cls, raw: str) -> BBox:
         """Parsa una stringa tipo "<|det|>label [x1, y1, x2, y2]<|/det|>" o "<|bbox|...>"."""
-        match = _DET_PATTERN.search(raw)
+        match = _DET_PATTERN.search(raw) if "<|det|>" in raw else None
         if not match:
-            match = _BBOX_PATTERN.search(raw)
+            match = _BBOX_PATTERN.search(raw) if "<|bbox|" in raw else None
             if not match:
                 raise ValueError(f"Formato BBox non riconosciuto: {raw!r}")
             x1, y1, x2, y2 = (int(g) for g in match.groups()[:4])
