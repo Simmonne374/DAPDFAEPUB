@@ -12,6 +12,108 @@ Scarica l'installer `RelicToEpub-Setup-0.1.1.exe` (~3 GB). È un singolo file ch
 - L'MSI di **pandoc 3.10** (verrà installato in automatico come dipendenza; il filename dell'MSI è configurabile via `/DPandocMsi=` al momento del build, vedi `BUILD.md`)
 - Il bootstrap GPU-aware che installerà la build torch corretta al primo avvio
 
+> **Requisito di sistema**: Windows 10 o 11, architettura **x64**. Servono almeno **3 GB liberi** durante l'installazione (l'installer avvisa se lo spazio è insufficiente).
+
+### Varianti disponibili
+
+A partire dalla **0.2.0**, sono disponibili due varianti dell'installer:
+
+| Variante | File | Privilegi richiesti | Destinazione | Registro |
+|----------|------|---------------------|--------------|----------|
+| **per-user (senza UAC)** | `RelicToEpub-Setup-X.Y.Z-peruser.exe` | nessuno | `%LOCALAPPDATA%\Programs\RelicToEpub` | HKCU |
+| **per-machine (legacy)** | `RelicToEpub-Setup-X.Y.Z.exe` | admin | `%ProgramFiles%\RelicToEpub` | HKLM |
+| **dual-mode (default)** | `RelicToEpub-Setup-X.Y.Z.exe` | wizard chiede | scelta utente | scelta utente |
+
+La variante **dual-mode** è il default: il wizard mostra una pagina di scelta tra "Installa solo per me" (consigliato, nessun prompt UAC) e "Installa per tutti gli utenti" (richiede admin). La scelta può essere pre-vincolata al build con `/DInstallScope=per-user` oppure `per-machine` (vedi `BUILD.md`).
+
+---
+
+## 1b. Installazione per-utente (senza UAC)
+
+Questa modalità evita completamente il prompt UAC e funziona anche in ambienti "locked-down" (aule scolastiche, kiosk, account standard, RDP da amministratore). È la modalità **consigliata** per la maggior parte degli utenti.
+
+### Quando usarla
+
+- **Sì**: un solo utente usa il PC, account standard, niente accesso admin
+- **Sì**: PC aziendale con policy restrittive su UAC
+- **Sì**: installazione su una macchina che non è tua (es. laboratorio)
+- **No**: più utenti condividono lo stesso PC e vogliono la stessa versione dell'app (usa per-machine)
+- **No**: il tuo antivirus aziendale rileva solo l'installer per-user (raro ma possibile — usa per-machine)
+
+### Cosa cambia rispetto all'installazione per-machine
+
+| Aspetto | per-user | per-machine |
+|---------|----------|-------------|
+| Prompt UAC | no | sì (una volta) |
+| Cartella installazione | `%LOCALAPPDATA%\Programs\RelicToEpub` | `%ProgramFiles%\RelicToEpub` |
+| Visibilità in "App e funzionalità" | solo per utente corrente | per tutti gli account del PC |
+| Registro uninstall | `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\..._is1` | `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\..._is1` |
+| Installazione pandoc MSI | **saltata** (vedi sotto) | sì |
+| Cache wheel torch | `%LOCALAPPDATA%\RelicToEpub\torch_wheel_cache\` | stesso percorso |
+| Modello OCR | `%LOCALAPPDATA%\RelicToEpub\models\` | stesso percorso |
+| AppMutex installer | `RelicToEpub-Setup-Mutex-X.Y.Z-per-user` | `RelicToEpub-Setup-Mutex-X.Y.Z-per-machine` |
+
+> **Pandoc MSI**: l'installazione per-user salta il `msiexec.exe` per pandoc
+> perché l'MSI richiede privilegi admin (scrive in `%ProgramFiles%` e
+> modifica la `PATH` di sistema). Al primo avvio della UI o CLI,
+> `RelicToEpubBoot.exe` scarica automaticamente pandoc in una cartella
+> utente scrivibile (`%LOCALAPPDATA%\RelicToEpub\pandoc\`) usando la
+> funzione `pypandoc.download_pandoc()`. La conversione PDF→EPUB non
+> richiede privilegi in nessun momento. Vedi `build/launchers/gpu_bootstrap.py`
+> sezione "Pandoc resolution".
+
+### Passi dell'installazione
+
+1. Doppio click su `RelicToEpub-Setup-X.Y.Z.exe` (o sulla variante `-peruser`).
+2. Se Windows SmartScreen lo blocca: **"Altre informazioni → Esegui comunque"**. L'installer non è firmato digitalmente in questa versione.
+3. **Pagina "Modalità di installazione"** (solo dual-mode):
+   - Seleziona **"Installa solo per me (consigliato, nessun prompt UAC)"**
+   - Vedi il riepilogo che conferma il path suggerito (`%LOCALAPPDATA%\Programs\RelicToEpub`)
+4. Pagina successiva: **cartella di installazione** (già precompilata col path corretto per la scelta fatta).
+5. Scegli le task opzionali (desktop, start menu, removecache, adduserpath).
+6. Clicca **Installa**. **Nessun prompt UAC.**
+7. **Cosa vedi durante l'installazione** (status label cambia):
+   - "Estrazione componenti applicazione in corso — Attendere prego"
+   - "Configurazione finale (skip pandoc MSI per install per-user)"
+   - "Configurazione finale (Start Menu, registro) — Quasi terminato"
+8. Da Start Menu (o desktop) troverai `RelicToEpub UI` e `RelicToEpub (CLI)`.
+
+### Disinstallazione
+
+Da **Impostazioni → App → RelicToEpub → Disinstalla**, oppure Start Menu
+→ **Disinstalla RelicToEpub**. L'uninstaller cerca le voci in **HKCU
+prima** di HKLM (vedi `GetPreviousInstallPath` in `installer.iss`), quindi
+funziona senza prompt UAC anche se l'app è stata installata per-user.
+
+---
+
+## 2. Installazione (per-machine, legacy)
+
+> Questa sezione descrive l'installazione tradizionale "per tutti gli utenti"
+> con privilegi admin. Se hai selezionato "Installa per tutti gli utenti"
+> nel wizard dual-mode, oppure stai usando la variante `RelicToEpub-Setup-X.Y.Z.exe`
+> legacy, segui questi passi.
+
+1. Doppio click su `RelicToEpub-Setup-0.1.1.exe`.
+2. Se Windows SmartScreen lo blocca: **"Altre informazioni → Esegui comunque"**. L'installer non è firmato digitalmente in questa versione.
+3. Scegli:
+   - La **cartella di installazione** (default: `C:\Program Files\RelicToEpub`)
+   - Se creare un'icona **sul desktop**
+   - Se creare voci **in Start Menu** (default: sì)
+4. Clicca **Installa**.
+5. **Cosa vedi durante l'installazione**:
+   - Una barra di progresso principale avanza durante l'estrazione dei file
+   - Sotto, una **status label** mostra le fasi:
+     - "Estrazione componenti applicazione in corso — Attendere prego"
+     - "Installazione dipendenza esterna (pandoc) — Attendere prego"
+     - "Configurazione finale (Start Menu, registro) — Quasi terminato"
+6. Al termine potrai scegliere se aprire la cartella di installazione.
+7. Da Start Menu (o desktop) troverai:
+   - **RelicToEpub UI** — interfaccia Gradio (apre il browser predefinito)
+   - **RelicToEpub (CLI)** — utility terminale one-shot
+
+> ⚠️ **Importante**: **non chiudere** l'installer pensando sia bloccato. Ogni fase mostra cosa sta succedendo. La fase 2 (pandoc MSI) richiede 10-30 s.
+
 > **Requisito di sistema**: Windows 10 o 11, architettura **x64**. Servono almeno **3 GB liberi** durante l'installazione (l'installer avvisa se lo spazio è insufficiente) e diritti di amministratore per installare pandoc.
 
 ---
@@ -253,7 +355,24 @@ Per riparare manualmente:
    e reinstalla
 
 ### "msiexec error 2502/2503" durante l'installazione di pandoc
-L'utente non ha diritti di amministratore. L'installer di Inno Setup richiede privilegi elevati per installare pandoc, quindi rilancialo come amministratore (click destro → Esegui come amministratore).
+L'utente non ha diritti di amministratore. L'installer di Inno Setup richiede privilegi elevati per installare pandoc, quindi rilancialo come amministratore (click destro → Esegui come amministratore). **Nota**: se hai selezionato la modalità per-user (sezione 1b), questo errore non si presenta: l'MSI di pandoc viene saltato e pandoc viene scaricato automaticamente al primo avvio.
+
+### "L'app parte ma la conversione fallisce: pandoc not found" (install per-user)
+L'installazione per-user non installa l'MSI di pandoc (richiede admin). Al primo avvio, `RelicToEpubBoot.exe` dovrebbe scaricare pandoc in `%LOCALAPPDATA%\RelicToEpub\pandoc\`. Se il download fallisce (rete aziendale, mirror non raggiungibile):
+
+1. Scarica pandoc manualmente da https://pandoc.org/installing.html (versione 3.10+)
+2. Estrai `pandoc.exe` in `%LOCALAPPDATA%\RelicToEpub\pandoc\`
+3. Riavvia la UI/CLI: il bootstrap rileverà il file e procederà
+
+In alternativa, puoi **disinstallare** la versione per-user e **reinstallare** la variante per-machine (admin): l'MSI di pandoc verrà eseguito automaticamente.
+
+### "Vedo l'app in App e funzionalità anche dopo disinstallazione" (mixed-mode)
+Se in passato hai installato sia la variante per-user che quella per-machine (es. testing), possono essere presenti **due voci separate** in "App e funzionalità":
+
+- Una in HKCU (solo per utente corrente) → "RelicToEpub 0.2.0" — si rimuove senza UAC
+- Una in HKLM (per tutti gli utenti) → "RelicToEpub 0.2.0" — richiede UAC per rimuovere
+
+Disinstalla **entrambe** per pulizia completa.
 
 ### "Compatibilità CUDA: GPU rilevata ma driver vecchio"
 Aggiorna i driver NVIDIA da [nvidia.com/drivers](https://www.nvidia.com/drivers). Per SM ≥ 6.x serve almeno driver **450+** (CUDA 11.x compatibile).

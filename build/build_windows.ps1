@@ -152,7 +152,30 @@ if ($env:SKIP_INSTALLER -eq "1") {
             }
             if (-not $myVer) { $myVer = "0.0.0+unknown" }
             Write-Host "ISCC versione: $myVer" -ForegroundColor Cyan
-            & $iscc /DMyAppVersion=$myVer $issPath
+
+            # Determina lo scope di installazione. Default: "either"
+            # (wizard chiede all'utente). Valori accettati:
+            #   per-user      -> installer senza UAC, %LOCALAPPDATA%
+            #   per-machine   -> installer admin, %ProgramFiles%
+            #   either        -> wizard chiede (default)
+            # L'env var MYAPP_INSTALLSCOPE viene passata a ISCC come
+            # /DInstallScope=<value>; il default di build installer.iss
+            # e' "either" (vedi #ifndef InstallScope).
+            $installScope = $env:MYAPP_INSTALLSCOPE
+            if (-not $installScope) { $installScope = "either" }
+            Write-Host "ISCC InstallScope: $installScope" -ForegroundColor Cyan
+
+            # L'output filename include il suffisso "-peruser" quando
+            # si forza per-user (utile per package manager e firme
+            # separate); per "either" e per-machine non c'e suffisso.
+            $baseName = "RelicToEpub-Setup-$myVer"
+            if ($installScope -eq "per-user") {
+                $baseName = "RelicToEpub-Setup-${myVer}-peruser"
+            }
+
+            # Compila l'installer passando scope + versione + baseName
+            # (quest'ultimo forza il nome file EXE prodotto).
+            & $iscc /DMyAppVersion=$myVer /DInstallScope=$installScope /DOutputBaseFilename=$baseName $issPath
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup fallito (exit $LASTEXITCODE)" }
         }
     }
