@@ -86,25 +86,29 @@ def test_select_wheel_for_gpu_supported(
 
 def test_select_wheel_for_gpu_unknown_sm_falls_back() -> None:
     # SM 4.x (Fermi/Kepler legacy): non coperto direttamente in CUDA_WHEEL,
-    # ma il fallback "first SM >= cc" lo mappa a cu118 (Maxwell). Questo e'
-    # il comportamento desiderato: meglio Maxwell cu118 che CPU pura su un
-    # Fermi vetusto. reason rimane vuoto perche' il match e' "nativo".
+    # ma il fallback "first SM >= cc" lo mappa a cu118 (Maxwell). Tuttavia
+    # un driver 390.144 NON supporta cu118 (che richiede >= 452.33): la
+    # catena di downgrade porta a CPU. Questo e' il comportamento corretto
+    # per SM legacy con driver vetusto (B60 / issue #27): meglio CPU pura
+    # che un wheel che crasha a ``import torch``.
     selected, reason = gb.select_wheel_for_gpu((4, 0), "390.144")
     tag, _ = selected
-    assert tag == "cu118"
-    assert reason == ""
+    assert tag == "cpu"
+    assert "452.33" in reason, (
+        f"reason deve citare il driver minimo richiesto; reason={reason!r}"
+    )
 
 
 def test_select_wheel_for_gpu_cu118_driver_too_old() -> None:
-    # SM 6.x con driver major < 11 (es. driver "1.x" ipotetico) -> cpu.
-    # NB: la soglia attuale e' deliberatamente lasca (major < 11); driver
-    # real-world come 388.16 hanno major >= 11 e quindi passano. Questo
-    # riflette il codice di produzione: il check serve solo a intercettare
-    # input palesemente malformati o pre-Windows-7 (driver "1.x").
+    # SM 6.x (Pascal) con driver 1.0 (caso patologico / malformato).
+    # cu118 richiede driver >= 452.33, quindi 1.0 non e' sufficiente:
+    # la catena di downgrade scende fino a cpu. (B60 / issue #27)
     selected, reason = gb.select_wheel_for_gpu((6, 1), "1.0")
     tag, _ = selected
     assert tag == "cpu"
-    assert "11+" in reason or "11." in reason
+    assert "452.33" in reason, (
+        f"reason deve citare la soglia cu118 (452.33); reason={reason!r}"
+    )
 
 
 def test_select_wheel_for_gpu_cu126_driver_too_old() -> None:
@@ -228,3 +232,77 @@ def test_check_install_path_floppy(tmp_path: Path) -> None:
     # L'eseguibile non esiste (e quindi viene comunque flaggato anche per
     # quello), ma ci assicuriamo che il flag di warning sia settato.
     assert os.environ.get("RELICTOEPUB_PATH_WARNING") == "1"
+
+
+# ============================================================
+# B60 (issue #27): ``select_wheel_for_gpu`` deve rispettare la CUDA
+# driver matrix ufficiale NVIDIA. Il vecchio codice confrontava solo
+# il major version del driver, portando a wheel inutilizzabili a
+# runtime (``CUDA error: no kernel image is available``).
+#
+# CUDA driver matrix (fonte: NVIDIA):
+#   cu118 → driver >= 452.33
+#   cu124 → driver >= 525.85
+#   cu126 → driver >= 530.30
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    ("cc", "driver", "expected_tag"),
+    [
+        # --- cu118 (SM legacy / Pascal / Turing) ---
+        ((6, 1), "452.33", "cu118"),  # soglia esatta → OK
+        ((6, 1), "471.41", "cu118"),  # driver Pascal/Ampere tipico → OK
+        ((6, 1), "451.99", "cpu"),    # 1 cent sotto soglia → downgrade a cpu
+        ((6, 1), "390.144", "cpu"),   # driver legacy pre-CUDA-11 → cpu
+        # --- cu124 (Ampere / Ada / Hopper) ---
+        ((8, 6), "525.85", "cu124"),  # soglia esatta → OK
+        ((8, 6), "531.41", "cu124"),  # driver tipico → OK
+        ((8, 6), "525.84", "cu118"),  # 1 cent sotto soglia → downgrade
+        ((8, 6), "470.103", "cu118"), # BUG REPRO: Pascal+driver470 → cu124
+                                      # (crash runtime); dopo fix → cu118.
+        ((8, 9), "524.99", "cu118"),  # Ada Lovelace, driver appena sotto
+        ((9, 0), "535.86", "cu124"),  # Hopper → OK
+        # --- cu126 (Blackwell) ---
+        ((10, 0), "530.30", "cu126"), # soglia esatta → OK
+        ((10, 0), "555.42", "cu126"), # driver recente → OK
+        ((10, 0), "530.29", "cu124"), # 1 cent sotto soglia → downgrade
+        ((10, 0), "525.85", "cu124"), # driver minimo cu124 → downgrade
+    ],
+)
+def test_select_wheel_for_gpu_respects_driver_matrix(
+    cc: tuple[int, int], driver: str, expected_tag: str
+) -> None:
+    """B60: la decision table deve rispettare la driver matrix reale.
+
+    Caso critico di regressione (riproduzione del bug):
+        SM (8, 6) — RTX 3090 — con driver 470.103:
+            vecchio codice → cu124 (perché driver_major=4 < 12? NO,
+            anzi: driver_major=4 > 1, ma < 12, quindi downgrade a cu118).
+        Driver 525.x (es. 525.84, 525.85, 525.105):
+            vecchio codice → cu124 (driver_major=12, non < 12). BUG: 525.84
+            è < 525.85 richiesto → CUDA runtime error a import torch.
+    """
+    selected, _reason = gb.select_wheel_for_gpu(cc, driver)
+    tag, _ = selected
+    assert tag == expected_tag, (
+        f"BUG B60: per SM {cc} + driver {driver!r} il tag atteso era "
+        f"{expected_tag!r} ma select_wheel_for_gpu ha restituito {tag!r}"
+    )
+
+
+def test_select_wheel_for_gpu_downgrade_reason_mentions_min_driver(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """B60: la stringa ``reason`` di un downgrade deve menzionare il
+    driver minimo richiesto, così l'utente sa cosa aggiornare."""
+    # Reindirizza _log_selfcheck su una dir temporanea per non sporcare
+    # la vera LOCALAPPDATA durante i test.
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    # RTX 3090 + driver 470.103 → aspetta reason che citi 525.85.
+    _selected, reason = gb.select_wheel_for_gpu((8, 6), "470.103")
+    assert "525.85" in reason, (
+        f"BUG B60: reason deve menzionare il driver minimo (525.85); "
+        f"reason={reason!r}"
+    )
+    assert "cu124" in reason  # tag originale da cui si scende
