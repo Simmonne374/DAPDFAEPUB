@@ -50,8 +50,13 @@ _HORIZONTAL_RULE = re.compile(r"^[ \t]*([-_*])\1{2,}[ \t]*$", re.MULTILINE)
 _B39_PLACEHOLDER_PREFIX = "\x00CODEBLOCK"
 _B39_PLACEHOLDER_SUFFIX = "\x00"
 
-# Apostrofi tipografici → ASCII (gli e-Reader come Kindle base non li gestiscono)
-_TYPOGRAPHIC_QUOTES = re.compile(r"[‘’`´]")  # solo la serie "left-single + backtick"
+# Apostrofi tipografici → ASCII (gli e-Reader come Kindle base non li gestiscono).
+# B60: il backtick ASCII (U+0060) è stato rimosso dal character class: NON è un
+# apostrofo tipografico, è il delimitatore dell'inline code Markdown
+# (`` `foo()` ``). Includerlo rompeva il rendering dell'inline code. L'acute
+# accent (U+00B4) resta: è una sostituzione OCR comune per l'apostrofo in
+# italiano (``perché`` → ``perch´``), spagnolo e francese.
+_TYPOGRAPHIC_QUOTES = re.compile(r"[‘’´]")  # solo apostrofi tipografici + acute
 _TYPOGRAPHIC_QUOTES_DOUBLE = re.compile(r"[“”«»]")
 
 # Spaziature multiple
