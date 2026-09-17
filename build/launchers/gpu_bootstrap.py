@@ -65,6 +65,27 @@ CUDA_WHEEL = {
     (12, 0): ("cu126", "12.6"),  # Blackwell consumer (RTX 50xx)
 }
 
+# Mapping CUDA toolkit → versione minima del driver NVIDIA (CUDA driver
+# matrix ufficiale). Usato da :func:`select_wheel_for_gpu` per scegliere
+# un wheel effettivamente caricabile a runtime: scaricare un wheel
+# ``cu124`` su un driver 470.x termina con
+# ``CUDA error: no kernel image is available for execution on the device``.
+CUDA_MIN_DRIVER: dict[str, str] = {
+    "cu118": "452.33",
+    "cu124": "525.85",
+    "cu126": "530.30",
+}
+
+# Catena di fallback usata quando il driver installato è più vecchio
+# della soglia del wheel nativo per la compute capability. Si scende di
+# un gradino alla volta (cu126 → cu124 → cu118 → cpu) finché non si
+# trova un wheel compatibile col driver reale.
+_DOWNGRADE_WHEEL: dict[str, tuple[str, str]] = {
+    "cu126": ("cu124", "12.4"),
+    "cu124": ("cu118", "11.8"),
+    "cu118": ("cpu", "0"),
+}
+
 WHEEL_BASE = "https://download.pytorch.org/whl"
 TORCH_VERSION_DEFAULT = "2.4.0"
 # Subdirectory (sotto torch_wheel_cache/) in cui memorizziamo i wheel di
@@ -141,33 +162,75 @@ def get_gpu_info_via_smi() -> dict | None:
     return info if info.get("compute_cap") else None
 
 
-def select_wheel_for_gpu(compute_cap: tuple[int, int], driver_str: str) -> tuple[str, str]:
-    """Sceglie wheel torch + versione CUDA driver minima richiesta."""
-    # Trova la chiave più vicina (potrebbe essere SM non esatto in lista)
+def select_wheel_for_gpu(
+    compute_cap: tuple[int, int], driver_str: str
+) -> tuple[tuple[str, str], str]:
+    """Sceglie wheel torch + versione CUDA driver minima richiesta.
+
+    Rispetta la **CUDA driver matrix ufficiale NVIDIA**:
+
+    +----------+----------------------+
+    | toolkit  | driver NVIDIA minimo |
+    +==========+======================+
+    | cu118    | 452.33               |
+    +----------+----------------------+
+    | cu124    | 525.85               |
+    +----------+----------------------+
+    | cu126    | 530.30               |
+    +----------+----------------------+
+
+    Se il driver installato è più vecchio della soglia del wheel nativo
+    per la compute capability, scala al wheel CUDA precedente
+    (``cu126`` → ``cu124`` → ``cu118`` → ``cpu``). La stringa ``reason``
+    del valore di ritorno descrive il downgrade e viene anche loggata in
+    ``launcher_selfcheck.log`` via :func:`_log_selfcheck`.
+
+    Returns:
+        Tupla ``((tag, min_version), reason)``; ``reason`` è ``""`` se il
+        wheel nativo è utilizzabile.
+    """
+    # 1) Determina il wheel "nativo" per la compute capability.
     selected = CUDA_WHEEL.get(compute_cap)
     if selected is None:
-        # Fallback: prima match ≥ SM
-        candidates = sorted([k for k in CUDA_WHEEL if k[0] >= compute_cap[0]])
+        # Fallback: prima SM ≥ compute_cap[0] (es. SM 4.0 → Maxwell cu118).
+        candidates = sorted(k for k in CUDA_WHEEL if k[0] >= compute_cap[0])
         if candidates:
             selected = CUDA_WHEEL[candidates[0]]
         else:
             selected = ("cpu", "")
-    cuda_tag, _min_driver = selected
+    cuda_tag, _min_runtime = selected
 
-    # Controlla versione driver
+    # 2) Parsing del driver NVIDIA installato.
+    # ``Version`` accetta "531.41", "531.41-1", "531.41 (r531_xx)", ecc.
     try:
-        driver_parts = driver_str.split(".")
-        driver_major = int(driver_parts[0])
-    except (ValueError, AttributeError):
-        driver_major = 0
+        from packaging.version import InvalidVersion, Version
 
-    if cuda_tag == "cu118" and driver_major < 11:
-        return ("cpu", "0"), "driver CUDA 11+ mancante"
-    if cuda_tag == "cu124" and driver_major < 12:
-        # CUDA 12.4 richiede driver ≥ 530; scendiamo a cu118
-        return ("cu118", "11.8"), f"driver CUDA {driver_str} troppo vecchio per cu124"
-    if cuda_tag == "cu126" and driver_major < 12:
-        return ("cu124", "12.4"), f"driver CUDA {driver_str} non supporta cu126"
+        driver_ver = Version(driver_str)
+    except (InvalidVersion, ValueError, AttributeError, TypeError):
+        # Driver non parsabile → fallback conservativo a CPU.
+        reason = f"driver CUDA non parsabile ({driver_str!r}); uso CPU"
+        _log_selfcheck(reason)
+        return ("cpu", "0"), reason
+
+    # 3) Confronta con la soglia del CUDA toolkit scelto.
+    required_min = CUDA_MIN_DRIVER.get(cuda_tag)
+    if required_min is not None:
+        try:
+            if driver_ver < Version(required_min):
+                fallback_tag, fallback_runtime = _DOWNGRADE_WHEEL.get(
+                    cuda_tag, ("cpu", "0")
+                )
+                reason = (
+                    f"driver CUDA {driver_str} troppo vecchio per {cuda_tag} "
+                    f"(richiesto >= {required_min}); uso {fallback_tag}"
+                )
+                # Diagnostica: l'utente deve sapere cosa aggiornare.
+                _log_selfcheck(reason)
+                return (fallback_tag, fallback_runtime), reason
+        except InvalidVersion:
+            # required_min è corrotto (impossibile in pratica con valori
+            # letterali): prosegui con il wheel nativo.
+            pass
 
     return selected, ""
 
