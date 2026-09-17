@@ -716,7 +716,8 @@ def test_radio_buttons_share_group_index(code_block: str) -> None:
 def test_curpagechanged_still_updates_dir_and_mutex(code_block: str) -> None:
     """CurPageChanged NON avendo piu' il reset radio deve continuare ad
     aggiornare DirEdit e AppMutex quando l'utente raggiunge wpSelectDir
-    / wpReadyToInstall."""
+    / wpReady (identificatore canonico Inno Setup: NON wpReadyToInstall,
+    che non esiste e provocherebbe 'Unknown identifier' al compile)."""
     cur_block = re.search(
         r"procedure\s+CurPageChanged\s*\([^)]*\)\s*;\s*begin.*?^end\s*;",
         code_block,
@@ -727,4 +728,14 @@ def test_curpagechanged_still_updates_dir_and_mutex(code_block: str) -> None:
     assert "DirEdit" in body, "CurPageChanged deve aggiornare DirEdit"
     assert "GetDefaultDirName" in body, "CurPageChanged deve chiamare GetDefaultDirName"
     assert "UpdateAppMutexForScope" in body, "CurPageChanged deve chiamare UpdateAppMutexForScope"
+    # Guard: wpReadyToInstall non e' un identificatore valido in Inno Setup
+    # (gli ID wizard sono wpWelcome, wpLicense, wpPassword, wpInfoBefore,
+    # wpUserInfo, wpSelectDir, wpSelectComponents, wpSelectProgramGroup,
+    # wpSelectTasks, wpReady, wpPreparing, wpInstalling, wpInfoAfter,
+    # wpFinished). Se compare come identificatore nudo nel sorgente, il
+    # compilatore Pascal-script lo rifiutera'.
+    assert "wpReadyToInstall" not in body, (
+        "CurPageChanged referenzia wpReadyToInstall: identificatore NON "
+        "definito in Inno Setup. Usare wpReady."
+    )
 

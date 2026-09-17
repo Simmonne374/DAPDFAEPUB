@@ -646,12 +646,12 @@ end;
 //    e' True, e su re-entry dobbiamo PRESERVARE la scelta esplicita
 //    dell'utente (altrimenti tornando indietro con Back la scelta
 //    verrebbe resettata al default).
-//  - quando si entra in wpSelectDir / wpReadyToInstall, aggiorna DirEdit
+//  - quando si entra in wpSelectDir / wpReady, aggiorna DirEdit
 //    e AppMutex in base alla scelta corrente.
 // ----------------------------------------------------------------------
 procedure CurPageChanged(CurPageID: Integer);
 begin
-  if (CurPageID = wpSelectDir) or (CurPageID = wpReadyToInstall) then
+  if (CurPageID = wpSelectDir) or (CurPageID = wpReady) then
   begin
     // Forza DefaultDirName coerente con la scelta corrente
     if WizardForm.DirEdit <> nil then
