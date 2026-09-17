@@ -231,7 +231,7 @@ def _run_pipeline(
 
             yield (
                 log_to_show, gallery, None, gr.update(),
-                pipeline, gr.update(value="⏹️ Stop", interactive=True),
+                pipeline, gr.update(value="⏹️ Ferma conversione", interactive=True),
                 # BUG #11: disabilita run_btn durante l'esecuzione.
                 gr.update(interactive=False, value="⏳ Conversione in corso..."),
             )
@@ -276,7 +276,7 @@ def _run_pipeline(
             base_log_text, gallery, str(final_dest_epub),
             check_model_status()[1],
             None,  # pipeline_state → reset per prossima run
-            gr.update(value="⏹️ Stop", interactive=False),
+            gr.update(value="⏹️ Nessuna conversione in corso", interactive=False),
             # BUG #11: ri-abilita il pulsante Converti.
             gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
@@ -298,7 +298,7 @@ def _run_pipeline(
             base_log_text, gallery, None,
             gr.update(),
             None,  # reset pipeline_state
-            gr.update(value="⏹️ Stop", interactive=False),
+            gr.update(value="⏹️ Nessuna conversione in corso", interactive=False),
             gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
     except (RuntimeError, ValueError, OSError, ImportError, TimeoutError) as exc:
@@ -314,7 +314,7 @@ def _run_pipeline(
             base_log_text, gallery, None,
             gr.update(),
             None,
-            gr.update(value="⏹️ Stop", interactive=False),
+            gr.update(value="⏹️ Nessuna conversione in corso", interactive=False),
             gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
         raise gr.Error(f"Errore durante la conversione: {exc}") from exc
@@ -420,7 +420,7 @@ def build_demo() -> gr.Blocks:
 
                 run_btn = gr.Button("📄 Seleziona un PDF per convertire", variant="primary", size="lg", interactive=False)
                 stop_btn = gr.Button(
-                    "⏹️ Stop",
+                    "⏹️ Nessuna conversione in corso",
                     variant="stop",
                     size="lg",
                     interactive=False,
