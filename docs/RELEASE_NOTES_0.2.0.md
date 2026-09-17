@@ -1,6 +1,6 @@
 # RelicToEpub 0.2.0 — Note di rilascio
 
-Data: 2026-01-22
+Data: 2026-09-17
 
 Questa release aggiunge il **supporto dual-mode dell'installer Windows**:
 l'utente puo' scegliere tra installazione **per-user (senza UAC)** e

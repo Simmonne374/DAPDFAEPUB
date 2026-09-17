@@ -35,14 +35,14 @@ import update_check as uc
 # =====================================================================
 
 @pytest.mark.parametrize("text,expected", [
-    ("0.1.1",       (0, 1, 1, 0, 0)),
-    ("1.0",         (1, 0, 0, 0, 0)),
-    ("v2.0",        (2, 0, 0, 0, 0)),
-    ("v2.0.0",      (2, 0, 0, 0, 0)),
+    ("0.1.1",       (0, 1, 1, 4, 0)),    # finale: pre_rank=4 (PEP 440)
+    ("1.0",         (1, 0, 0, 4, 0)),
+    ("v2.0",        (2, 0, 0, 4, 0)),
+    ("v2.0.0",      (2, 0, 0, 4, 0)),
     ("1.2.3a1",     (1, 2, 3, 1, 1)),
     ("1.2.3b2",     (1, 2, 3, 2, 2)),
     ("1.2.3rc1",    (1, 2, 3, 3, 1)),
-    ("0.1.1+abc",   (0, 1, 1, 0, 0)),    # local identifier ignorato
+    ("0.1.1+abc",   (0, 1, 1, 4, 0)),    # local identifier ignorato
     ("",            None),
     ("unknown",     None),
     (None,          None),
@@ -53,8 +53,8 @@ def test_parse_version(text, expected) -> None:
 
 def test_parse_version_garbage_returns_none() -> None:
     assert uc.parse_version("hello world") is None
-    # "123.456" e' valida: major=123, minor=456
-    assert uc.parse_version("123.456") == (123, 456, 0, 0, 0)
+    # "123.456" e' valida: major=123, minor=456, finale (pre_rank=4)
+    assert uc.parse_version("123.456") == (123, 456, 0, 4, 0)
     # Invece, "1.2.3.4" non matcha il pattern X.Y.Z
     assert uc.parse_version("1.2.3.4") is None
     assert uc.parse_version("not.a.version") is None
@@ -70,11 +70,22 @@ def test_parse_version_garbage_returns_none() -> None:
     ("0.1.0", "0.1.1", False),
     ("1.0.0", "0.9.9", True),
     ("0.1.2", "0.1.1", True),
-    ("1.0.0rc1", "1.0.0b5", True),   # rc > beta
-    ("1.0.0b5", "1.0.0a1", True),    # beta > alpha
+    ("1.0.0rc1", "1.0.0b5", True),   # rc > beta (PEP 440)
+    ("1.0.0b5", "1.0.0a1", True),    # beta > alpha (PEP 440)
     ("2.0.0", "1.99.99", True),
     ("invalid", "0.1.1", None),      # latest non parsabile
     ("0.1.1", "invalid", None),      # current non parsabile
+    # PEP 440: il rilascio finale e' SEMPRE il piu' alto per la stessa
+    # tripletta X.Y.Z. Bug storico: pre_rank=0 per finale + pre_rank=1
+    # per alpha portava "1.0.0a1 > 1.0.0". Fisso in questa versione.
+    ("1.0.0",   "1.0.0a1",  True),   # finale > alpha
+    ("1.0.0",   "1.0.0b1",  True),   # finale > beta
+    ("1.0.0",   "1.0.0rc1", True),   # finale > rc
+    ("1.0.0a1", "1.0.0",    False),  # alpha < finale
+    ("1.0.0b1", "1.0.0",    False),
+    ("1.0.0rc1", "1.0.0",    False),
+    ("1.0.0rc1", "1.0.0rc2", False), # rc1 < rc2 (numero progressivo)
+    ("1.0.0rc3", "1.0.0rc2", True),
 ])
 def test_version_is_newer(latest, current, expected) -> None:
     assert uc.version_is_newer(latest, current) == expected

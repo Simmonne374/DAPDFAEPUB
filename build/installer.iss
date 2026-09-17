@@ -318,6 +318,12 @@ var
   RadioPerMachine: TNewRadioButton;
   // Cache della scelta corrente (ricalcolata da GetInstallScope).
   ChosenScope: String;
+  // True alla prima attivazione della InstallModePage: usata dal
+  // hook OnActivate per inizializzare i radio button al default di
+  // build. L'hook OnActivate non riceve un flag FirstTime (vedi tipo
+  // Pascal-script TWizardPageNotifyEvent = procedure(Sender: TWizardPage)),
+  // quindi simuliamo la semantica con una variabile di modulo.
+  InstallModeFirstActivation: Boolean;
 
 // ----------------------------------------------------------------------
 // Utility: logging persistente (sopravvive al crash dell'installer)
@@ -493,13 +499,25 @@ end;
 //    * "Installa per tutti gli utenti" (richiede admin)
 //  La scelta viene letta da GetInstallScope() e usata per pilotare
 //  DefaultDirName, AppMutex e le sezioni [Registry]/[Run] condizionali.
+//
+//  La firma DEVE essere procedure(Sender: TWizardPage) perche' cosi'
+//  e' dichiarata TWizardPageNotifyEvent in Pascal-script (vedi
+//  jrsoftware/issrc Projects/Src/Compiler.ScriptClasses.pas). Il
+//  compilatore rifiuta handler con parametri extra: una versione
+//  precedente usava (Sender: TObject; FirstTime: Boolean) e NON
+//  compilava. La semantica "solo alla prima attivazione" e' ottenuta
+//  con la variabile di modulo InstallModeFirstActivation, inizializzata
+//  a True in InitializeWizard.
 // ----------------------------------------------------------------------
-procedure InstallModePageProc(Sender: TObject; FirstTime: Boolean);
+procedure InstallModePageProc(Sender: TWizardPage);
 begin
-  // Quando la pagina diventa visibile (FirstTime=True) o ri-visibile
-  // (tornando indietro con Back), assicurati che ChosenScope sia coerente.
-  if FirstTime then
+  // Quando la pagina diventa visibile per la prima volta, inizializza
+  // i radio button al default di build. Sui ritorni (Back) il flag
+  // resta False: lasciamo i radio button nella scelta esplicita
+  // dell'utente, che altrimenti verrebbe resettata ad ogni re-entry.
+  if InstallModeFirstActivation then
   begin
+    InstallModeFirstActivation := False;
     if DefaultInstallScope = SCOPE_PER_MACHINE then
       RadioPerMachine.Checked := True
     else
@@ -572,6 +590,7 @@ begin
   RadioPerUser.Caption :=
     'Installa solo per me (consigliato, nessun prompt UAC)';
   RadioPerUser.Font.Style := RadioPerUser.Font.Style + [fsBold];
+  RadioPerUser.GroupIndex := 1;
   RadioPerUser.Checked := True;
   RadioPerUser.OnClick := @RadioPerUserOnClick;
 
@@ -595,6 +614,7 @@ begin
   RadioPerMachine.Height := ScaleY(34);
   RadioPerMachine.Caption :=
     'Installa per tutti gli utenti (richiede privilegi admin)';
+  RadioPerMachine.GroupIndex := 1;
   RadioPerMachine.OnClick := @RadioPerMachineOnClick;
 
   HintLabel := TNewStaticText.Create(InstallModePage);
@@ -612,26 +632,25 @@ begin
 
   // Quando wpSelectDir (o altre pagine successive) prendono il focus,
   // aggiorna il path suggerito e il mutex in base alla scelta corrente.
+  // L'handler InstallModePageProc legge InstallModeFirstActivation per
+  // decidere se applicare il default di build (solo alla prima attivazione).
+  InstallModeFirstActivation := True;
   InstallModePage.OnActivate := @InstallModePageProc;
 end;
 
 // ----------------------------------------------------------------------
 // CurPageChanged: aggiorna i campi dipendenti quando l'utente naviga
 // nel wizard. In particolare:
-//  - quando lascia InstallModePage, aggiorna DirEdit (DefaultDirName)
-//  - aggiorna la AppMutex cosi' due installazioni in flight non collidono
+//  - NON tocchiamo i radio button qui: la prima inizializzazione e'
+//    fatta da InstallModePageProc quando InstallModeFirstActivation
+//    e' True, e su re-entry dobbiamo PRESERVARE la scelta esplicita
+//    dell'utente (altrimenti tornando indietro con Back la scelta
+//    verrebbe resettata al default).
+//  - quando si entra in wpSelectDir / wpReadyToInstall, aggiorna DirEdit
+//    e AppMutex in base alla scelta corrente.
 // ----------------------------------------------------------------------
 procedure CurPageChanged(CurPageID: Integer);
 begin
-  if CurPageID = InstallModePage.ID then
-  begin
-    // Appena si entra nella pagina, forza la scelta coerente con il
-    // default di build (InstallScope=#define).
-    if DefaultInstallScope = SCOPE_PER_MACHINE then
-      RadioPerMachine.Checked := True
-    else
-      RadioPerUser.Checked := True;
-  end;
   if (CurPageID = wpSelectDir) or (CurPageID = wpReadyToInstall) then
   begin
     // Forza DefaultDirName coerente con la scelta corrente

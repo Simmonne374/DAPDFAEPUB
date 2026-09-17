@@ -516,3 +516,215 @@ def test_no_bom_in_code_block(code_block: str) -> None:
         "Trovato carattere BOM UTF-8 (U+FEFF) dentro [Code]: "
         "potrebbe rompere la compilazione Pascal-script"
     )
+
+
+# =====================================================================
+# CurPageChanged: regression per preservazione scelta utente
+# =====================================================================
+
+
+def test_curpagechanged_does_not_reset_radio(code_block: str) -> None:
+    """CurPageChanged NON deve resettare i radio button.
+
+    Bug storico: CurPageChanged impostava RadioPerUser.Checked / RadioPerMachine.Checked
+    ad ogni entrata in InstallModePage. Conseguenza: se l'utente sceglieva
+    esplicitamente per-machine, navigava a wpSelectDir, poi tornava indietro con
+    Back, la scelta veniva resettata al default. L'inizializzazione deve
+    avvenire SOLO in InstallModePageProc, alla prima attivazione (quando
+    InstallModeFirstActivation e' True).
+    """
+    cur_block = re.search(
+        r"procedure\s+CurPageChanged\s*\([^)]*\)\s*;\s*begin.*?^end\s*;",
+        code_block,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert cur_block is not None, "CurPageChanged non trovata"
+    body = cur_block.group(0)
+    # Il pattern vietato: assegnamenti diretti al Checked dei radio button
+    # dentro CurPageChanged (qualsiasi assegnamento, anche dietro guardia)
+    forbidden = re.findall(
+        r"(RadioPerUser|RadioPerMachine)\s*\.\s*Checked\s*:=",
+        body,
+    )
+    assert not forbidden, (
+        "CurPageChanged contiene assegnamenti al Checked dei radio button "
+        f"({forbidden}): questo resetta la scelta utente ad ogni re-entry. "
+        "L'inizializzazione deve avvenire solo in InstallModePageProc "
+        "(hook OnActivate, alla prima attivazione)."
+    )
+
+
+def test_installmodepageproc_initializes_first_time_only(code_block: str) -> None:
+    """InstallModePageProc deve inizializzare i radio SOLO alla prima attivazione.
+
+    Inno Setup Pascal-script non passa un flag FirstTime all'handler
+    OnActivate (TWizardPageNotifyEvent = procedure(Sender: TWizardPage)).
+    La semantica "solo alla prima attivazione" e' ottenuta con una
+    variabile di modulo InstallModeFirstActivation: inizializzata a
+    True in InitializeWizard, impostata a False dopo la prima esecuzione.
+    Questo preserva la scelta esplicita dell'utente sui ritorni (Back).
+    """
+    proc_block = re.search(
+        r"procedure\s+InstallModePageProc\s*\([^)]*\)\s*;\s*begin.*?^end\s*;",
+        code_block,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert proc_block is not None, "InstallModePageProc non trovata"
+    body = proc_block.group(0)
+
+    # La firma NON deve contenere un parametro FirstTime (non esiste in
+    # TWizardPageNotifyEvent). Verifichiamo la firma esatta.
+    sig_match = re.search(
+        r"procedure\s+InstallModePageProc\s*\(([^)]*)\)\s*;",
+        body,
+    )
+    assert sig_match is not None, "Firma InstallModePageProc non trovata"
+    params = [p.strip() for p in sig_match.group(1).split(";") if p.strip()]
+    for p in params:
+        assert "FirstTime" not in p, (
+            "InstallModePageProc ha un parametro FirstTime: NON esiste "
+            "in TWizardPageNotifyEvent (procedure(Sender: TWizardPage)). "
+            "Usare la variabile di modulo InstallModeFirstActivation."
+        )
+
+    # Deve esistere il guard basato su InstallModeFirstActivation
+    assert "InstallModeFirstActivation" in body, (
+        "InstallModePageProc non usa InstallModeFirstActivation: "
+        "manca il guard per evitare il reset della scelta utente ad "
+        "ogni re-entry"
+    )
+    # Il guard deve essere in una struttura `if ... then begin ... end`
+    assert re.search(r"if\s+InstallModeFirstActivation\b", body), (
+        "InstallModePageProc deve avere un guard "
+        "'if InstallModeFirstActivation then' per preservare la scelta "
+        "sui ritorni"
+    )
+    # Il flag deve essere disattivato dopo l'inizializzazione (else
+    # verrebbe rieseguito ad ogni navigazione)
+    assert re.search(
+        r"InstallModeFirstActivation\s*:=\s*False", body
+    ), (
+        "InstallModePageProc deve disattivare InstallModeFirstActivation "
+        "(assegnare False) dopo aver applicato il default di build"
+    )
+
+    # Variabile di modulo dichiarata a livello var
+    assert re.search(
+        r"^\s*InstallModeFirstActivation\s*:\s*Boolean\s*;",
+        code_block,
+        re.MULTILINE,
+    ), (
+        "InstallModeFirstActivation deve essere dichiarata come variabile "
+        "di modulo Boolean (visibile all'handler OnActivate)"
+    )
+
+    # Inizializzazione a True in InitializeWizard PRIMA dell'assegnamento
+    # OnActivate (altrimenti il primo handler la vede gia' False).
+    init_block = re.search(
+        r"procedure\s+InitializeWizard\s*;.*?^end\s*;",
+        code_block,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert init_block is not None, "InitializeWizard non trovata"
+    init_body = init_block.group(0)
+    init_match = re.search(
+        r"InstallModeFirstActivation\s*:=\s*True[^\n]*\n[^\n]*InstallModePage\.OnActivate\s*:=",
+        init_body,
+    )
+    assert init_match is not None, (
+        "InitializeWizard deve inizializzare InstallModeFirstActivation := "
+        "True PRIMA di assegnare InstallModePage.OnActivate (altrimenti "
+        "il primo OnActivate non applichera' il default)"
+    )
+
+
+def test_installmodepageproc_signature_matches_wizardpage_event(
+    code_block: str,
+) -> None:
+    """La firma di InstallModePageProc DEVE essere procedure(Sender: TWizardPage).
+
+    Vincolo documentato di Pascal-script:
+    TWizardPageNotifyEvent = procedure(Sender: TWizardPage)
+    (vedi jrsoftware/issrc Projects/Src/Compiler.ScriptClasses.pas,
+    CL.AddTypeS('TWizardPageNotifyEvent', 'procedure(Sender: TWizardPage)')).
+    Un handler con un numero di parametri diverso (es. FirstTime: Boolean)
+    o con Sender: TObject... anche se TObject e' super-tipo di TWizardPage,
+    l'inferenza di TWizardPageNotifyEvent richiede esattamente TWizardPage
+    come unico parametro.
+    """
+    proc_block = re.search(
+        r"procedure\s+InstallModePageProc\s*\([^)]*\)\s*;\s*begin.*?^end\s*;",
+        code_block,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert proc_block is not None, "InstallModePageProc non trovata"
+    sig_match = re.search(
+        r"procedure\s+InstallModePageProc\s*\(([^)]*)\)",
+        proc_block.group(0),
+    )
+    assert sig_match is not None, "Firma InstallModePageProc non trovata"
+    params = [p.strip() for p in sig_match.group(1).split(";") if p.strip()]
+    assert params == ["Sender: TWizardPage"], (
+        "InstallModePageProc deve essere dichiarata come "
+        "procedure(Sender: TWizardPage) per matchare TWizardPageNotifyEvent. "
+        f"Firma trovata: ({sig_match.group(1)})"
+    )
+
+
+def test_radio_buttons_share_group_index(code_block: str) -> None:
+    """RadioPerUser e RadioPerMachine devono avere lo stesso GroupIndex.
+
+    Senza GroupIndex comune, due TNewRadioButton distinti nello stesso
+    parent sono ININDIPENDENTI: l'utente potrebbe cliccarne uno e poi
+    l'altro lasciandoli entrambi checked. Con GroupIndex := 1 su
+    entrambi, Inno Setup li tratta come gruppo mutualmente esclusivo
+    (auto-uncheck del fratello). Miglioria di UX/robustezza.
+    """
+    # Estrai il blocco di InitializeWizard (dove vengono creati i radio)
+    init_block = re.search(
+        r"procedure\s+InitializeWizard\s*;.*?^end\s*;",
+        code_block,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert init_block is not None, "InitializeWizard non trovata"
+    init_body = init_block.group(0)
+
+    # Cerca entrambe le assegnazioni GroupIndex := <n>
+    user_match = re.search(
+        r"RadioPerUser\s*\.\s*GroupIndex\s*:=\s*(\d+)",
+        init_body,
+    )
+    machine_match = re.search(
+        r"RadioPerMachine\s*\.\s*GroupIndex\s*:=\s*(\d+)",
+        init_body,
+    )
+    assert user_match is not None, (
+        "RadioPerUser non ha GroupIndex assegnato: i due radio button "
+        "non sono mutualmente esclusivi (utente puo' lasciarli entrambi checked)"
+    )
+    assert machine_match is not None, (
+        "RadioPerMachine non ha GroupIndex assegnato: i due radio button "
+        "non sono mutualmente esclusivi"
+    )
+    assert user_match.group(1) == machine_match.group(1), (
+        f"RadioPerUser.GroupIndex={user_match.group(1)} ma "
+        f"RadioPerMachine.GroupIndex={machine_match.group(1)}: "
+        "devono essere uguali per formare un gruppo mutualmente esclusivo"
+    )
+
+
+def test_curpagechanged_still_updates_dir_and_mutex(code_block: str) -> None:
+    """CurPageChanged NON avendo piu' il reset radio deve continuare ad
+    aggiornare DirEdit e AppMutex quando l'utente raggiunge wpSelectDir
+    / wpReadyToInstall."""
+    cur_block = re.search(
+        r"procedure\s+CurPageChanged\s*\([^)]*\)\s*;\s*begin.*?^end\s*;",
+        code_block,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert cur_block is not None
+    body = cur_block.group(0)
+    assert "DirEdit" in body, "CurPageChanged deve aggiornare DirEdit"
+    assert "GetDefaultDirName" in body, "CurPageChanged deve chiamare GetDefaultDirName"
+    assert "UpdateAppMutexForScope" in body, "CurPageChanged deve chiamare UpdateAppMutexForScope"
+

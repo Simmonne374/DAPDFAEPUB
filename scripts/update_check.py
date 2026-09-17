@@ -165,11 +165,13 @@ def parse_version(v: str) -> tuple:
     major = int(m.group(1) or 0)
     minor = int(m.group(2) or 0)
     patch = int(m.group(3) or 0)
-    # pre-release: "a" (alpha) < "b" (beta) < "rc" < stable (no suffix)
-    # Mappiamo a int con a=1, b=2, rc=3; "" (finale) = 0 perche' 0 < 1.
+    # Pre-release rank (PEP 440): il rilascio finale e' il PIU' ALTO
+    # per un dato major.minor.patch (final > rc > beta > alpha).
+    # Quindi mappiamo: "" (final) = 4, rc = 3, b = 2, a = 1.
+    # In questo modo (1,0,0,4,0) > (1,0,0,3,1) > (1,0,0,2,1) > (1,0,0,1,1).
     pre_letter = m.group(4) or ""
     pre_num = int(m.group(5) or 0) if m.group(5) else 0
-    pre_rank = {"": 0, "a": 1, "b": 2, "rc": 3}.get(pre_letter, 0)
+    pre_rank = {"a": 1, "b": 2, "rc": 3}.get(pre_letter, 4)
     return (major, minor, patch, pre_rank, pre_num)
 
 
