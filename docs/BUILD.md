@@ -143,6 +143,80 @@ working tree ha diff non staged (rischio di conflitti). Fai prima
 
 ---
 
+## 4c. Modalità di installazione (per-user vs per-machine)
+
+A partire dalla **0.2.0**, l'installer supporta **due modalità** di installazione:
+
+| Modalità | Path | Privilegi | Registro | Pandoc MSI |
+|----------|------|-----------|----------|------------|
+| **per-user** | `%LOCALAPPDATA%\Programs\RelicToEpub` | nessuno | HKCU | skippato (pypandoc) |
+| **per-machine** | `%ProgramFiles%\RelicToEpub` | admin | HKLM | installato |
+
+Il default dell'installer (cosa vede l'utente quando fa doppio click)
+dipende dal parametro build-time `InstallScope` (vedi `installer.iss`):
+
+| Valore | Comportamento | Output filename |
+|--------|---------------|------------------|
+| `per-user` | Solo per-user (niente wizard di scelta, niente UAC) | `RelicToEpub-Setup-X.Y.Z-peruser.exe` |
+| `per-machine` | Solo per-machine (wizard di scelta disabilitato) | `RelicToEpub-Setup-X.Y.Z.exe` |
+| `either` (default) | Wizard chiede all'utente | `RelicToEpub-Setup-X.Y.Z.exe` |
+
+### Compilare una variante per-user dedicata
+
+```powershell
+ISCC.exe /DMyAppVersion=0.2.0 /DInstallScope=per-user build\installer.iss
+```
+
+L'EXE prodotto si chiamerà `RelicToEpub-Setup-0.2.0-peruser.exe` (vedi
+sezione `[Setup] OutputBaseFilename` in `installer.iss`). NON mostrerà
+la pagina di scelta e NON chiederà privilegi admin.
+
+### Compilare una variante per-machine (legacy)
+
+```powershell
+ISCC.exe /DMyAppVersion=0.2.0 /DInstallScope=per-machine build\installer.iss
+```
+
+Mostrerà solo la pagina di selezione cartella, non chiederà la scelta
+modalità. Continuerà a richiedere UAC per installare in `%ProgramFiles%`.
+
+### Variante dual-mode (default)
+
+```powershell
+ISCC.exe /DMyAppVersion=0.2.0 build\installer.iss
+```
+
+Quando `InstallScope` non è specificato, il default in `installer.iss`
+è `"either"` e il wizard mostra la pagina di scelta. Questa è la
+variante che produce un singolo installer flessibile adatto a tutte
+le situazioni.
+
+### Tramite `build_windows.ps1`
+
+Lo script accetta la variabile d'ambiente `MYAPP_INSTALLSCOPE`:
+
+```powershell
+$env:MYAPP_INSTALLSCOPE = "per-user"
+powershell -ExecutionPolicy Bypass -File build\build_windows.ps1
+```
+
+Quando `MYAPP_INSTALLSCOPE=per-user`, l'EXE prodotto ha suffisso
+`-peruser` (utile per firme digitali separate, canali di rilascio
+distinti, package manager enterprise). Per gli altri valori il filename
+resta invariato.
+
+### Variabili d'ambiente della pipeline
+
+| Env var | Default | Note |
+|---------|---------|------|
+| `MYAPP_VERSION` | letto da `pyproject.toml` | versione X.Y.Z |
+| `MYAPP_INSTALLSCOPE` | `either` | `per-user` / `per-machine` / `either` |
+| `SKIP_INSTALLER` | unset | se `1`, salta ISCC |
+| `ISCC` | PATH lookup | path esplicito a `ISCC.exe` |
+| `PYTHON_BIN` | PATH lookup | path esplicito a `python.exe` |
+
+---
+
 ## 5. Decisioni di design rilevanti
 
 ### torch NON è bundleato nell'installer
