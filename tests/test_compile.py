@@ -693,19 +693,19 @@ def test_build_epub_chapter_titles_render_markdown(tmp_path: Path) -> None:
 
 
 def test_ingest_render_pdf_closes_pil_handles(tmp_path: Path) -> None:
-    """B31: il context manager `with Image.open()` deve essere usato
-    per chiudere l'handle di hires_path dopo la normalizzazione.
+    """B31: render_pdf deve processare le pagine in memoria senza lasciare
+    maniglie di file aperte.
 
-    Verifica statica: la funzione render_pdf deve contenere il pattern
-    `with Image.open(hires_path)` (il vecchio codice era `pil_hires = Image.open(...)`).
+    Verifica statica: la funzione render_pdf deve usare in-memory conversion (frombytes)
+    oppure context manager, evitando un-closed file handles su hires_path.
     """
     import inspect
 
     from relictoepub.ingest import render_pdf
     source = inspect.getsource(render_pdf)
-    assert "with Image.open(hires_path)" in source, (
-        "BUG B31: render_pdf() non usa context manager per Image.open(). "
-        "Possibile memory leak su PDF di molte pagine."
+    assert "Image.frombytes" in source or "with Image.open" in source, (
+        "BUG B31: render_pdf() non usa in-memory conversion o context manager per Image.open(). "
+        "Possibile memory leak o disk handle leak su PDF di molte pagine."
     )
 
 # ----------------------------------------------------------------------
