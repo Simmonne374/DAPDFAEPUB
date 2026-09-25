@@ -13,3 +13,6 @@
 ## 2024-05-26 - Dynamic text for disabled buttons
 **Learning:** While disabling buttons dependent on input (like `gr.Button(interactive=False)`) prevents premature clicks, the default label (e.g., "Converti in EPUB") doesn't explain *why* the button is disabled. Changing the text to state the required action (e.g., "Seleziona un PDF per convertire") significantly reduces user confusion and clearly communicates the prerequisite.
 **Action:** Always provide dynamic text for disabled buttons that clarifies the required action, and revert to the primary action text when the button becomes interactive using `gr.update(value=...)`.
+## 2026-09-24 - Yielding gr.update vs gr.Button
+**Learning:** When dynamically modifying UI components during streaming/generator yields (such as showing loading text on a button), yielding a raw component instantiation like `gr.Button()` is unsafe. It replaces the component entirely, which can lead to unpredictable UI states and test breakages in Gradio. Gradio 5+ returns dicts for properties on component updates.
+**Action:** Always yield `gr.update(value=..., interactive=...)` to safely patch specific properties of an existing component rather than recreating it.

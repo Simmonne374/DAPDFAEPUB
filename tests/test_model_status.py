@@ -64,13 +64,13 @@ def test_download_model_ui_success():
         log1, status1, btn1, _ = results[0]
         assert "Inizio download" in log1
         assert status1 == "⏳ **Download in corso...**"
-        assert btn1.interactive is False
+        assert btn1["interactive"] is False
 
         # Verifica l'ultimo yield (successo).
         log_last, status_last, btn_last, _ = results[-1]
         assert "Modello scaricato in cache HuggingFace" in log_last
         assert status_last == "🟢 **Modello rilevato localmente**"
-        assert btn_last.interactive is True
+        assert btn_last["interactive"] is True
 
         # Verifica che il repo scaricato sia quello giusto.
         mock_snap.assert_called_once()
@@ -102,7 +102,7 @@ def test_download_model_ui_failure():
         assert "Download fallito" in log_last
         assert "network timeout" in log_last
         assert status_last == "🔴 **Errore nel download del modello**"
-        assert btn_last.interactive is True
+        assert btn_last["interactive"] is True
 
 
 def test_download_model_ui_no_hub_dependency():
@@ -137,7 +137,7 @@ def test_download_model_ui_no_hub_dependency():
         log_last, status_last, btn_last, _ = results[-1]
         assert "non installato" in log_last
         assert status_last == "🔴 **Dipendenza mancante**"
-        assert btn_last.interactive is True
+        assert btn_last["interactive"] is True
     finally:
         builtins.__import__ = real_import
         if saved is not None:

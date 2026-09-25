@@ -231,7 +231,7 @@ def _run_pipeline(
 
             yield (
                 log_to_show, gallery, None, gr.update(),
-                pipeline, gr.update(value="⏹️ Stop", interactive=True),
+                pipeline, gr.update(value="⏹️ Interrompi conversione", interactive=True),
                 # BUG #11: disabilita run_btn durante l'esecuzione.
                 gr.update(interactive=False, value="⏳ Conversione in corso..."),
             )
@@ -276,7 +276,7 @@ def _run_pipeline(
             base_log_text, gallery, str(final_dest_epub),
             check_model_status()[1],
             None,  # pipeline_state → reset per prossima run
-            gr.update(value="⏹️ Stop", interactive=False),
+            gr.update(value="⏹️ Nessuna conversione attiva", interactive=False),
             # BUG #11: ri-abilita il pulsante Converti.
             gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
@@ -298,7 +298,7 @@ def _run_pipeline(
             base_log_text, gallery, None,
             gr.update(),
             None,  # reset pipeline_state
-            gr.update(value="⏹️ Stop", interactive=False),
+            gr.update(value="⏹️ Nessuna conversione attiva", interactive=False),
             gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
     except (RuntimeError, ValueError, OSError, ImportError, TimeoutError) as exc:
@@ -314,7 +314,7 @@ def _run_pipeline(
             base_log_text, gallery, None,
             gr.update(),
             None,
-            gr.update(value="⏹️ Stop", interactive=False),
+            gr.update(value="⏹️ Nessuna conversione attiva", interactive=False),
             gr.update(interactive=True, value="🚀 Converti in EPUB"),
         )
         raise gr.Error(f"Errore durante la conversione: {exc}") from exc
@@ -329,13 +329,13 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
     log_text = "🔄 Inizio download del modello 'baidu/Unlimited-OCR' (~6 GB)."
     log_text += "\n\nRestando in questa pagina vedrai i file scaricati uno per uno."
     gr.Info("Avvio download del modello, potrebbe richiedere diversi minuti...")
-    yield log_text, "⏳ **Download in corso...**", gr.Button(interactive=False), gr.update(visible=True, value=0, label="Download modello…")
+    yield log_text, "⏳ **Download in corso...**", gr.update(interactive=False, value="⏳ Download in corso..."), gr.update(visible=True, value=0, label="Download modello…")
 
     try:
         from huggingface_hub import snapshot_download
     except ImportError:
         log_text += "\n\n❌ `huggingface_hub` non installato. Installazione automatica…"
-        yield log_text, "🔴 **Dipendenza mancante**", gr.Button(interactive=True), gr.update(label="Errore")
+        yield log_text, "🔴 **Dipendenza mancante**", gr.update(interactive=True, value="📥 Scarica/Aggiorna Modello (~6 GB)"), gr.update(label="Errore")
         raise gr.Error("huggingface_hub non installato.")
 
     try:
@@ -350,13 +350,13 @@ def _download_model_ui() -> Iterator[tuple[str, str, gr.components.Component, gr
         )
     except (RuntimeError, ValueError, OSError, TimeoutError, ConnectionError) as exc:
         log_text += f"\n\n❌ Download fallito: {exc}"
-        yield log_text, "🔴 **Errore nel download del modello**", gr.Button(interactive=True), gr.update(visible=True, label="Riprova download")
+        yield log_text, "🔴 **Errore nel download del modello**", gr.update(interactive=True, value="📥 Scarica/Aggiorna Modello (~6 GB)"), gr.update(visible=True, label="Riprova download")
         raise gr.Error(f"Download modello fallito: {exc}") from exc
 
     log_text += f"\n\n✅ Modello scaricato in cache HuggingFace.\nPath: {path}"
     _, status_str = check_model_status()
     gr.Info("Modello scaricato con successo!")
-    yield log_text, status_str, gr.Button(interactive=True), gr.update(visible=True, label="Modello scaricato", value=1.0)
+    yield log_text, status_str, gr.update(interactive=True, value="📥 Scarica/Aggiorna Modello (~6 GB)"), gr.update(visible=True, label="Modello scaricato", value=1.0)
 
 
 def build_demo() -> gr.Blocks:
@@ -420,7 +420,7 @@ def build_demo() -> gr.Blocks:
 
                 run_btn = gr.Button("📄 Seleziona un PDF per convertire", variant="primary", size="lg", interactive=False)
                 stop_btn = gr.Button(
-                    "⏹️ Stop",
+                    "⏹️ Nessuna conversione attiva",
                     variant="stop",
                     size="lg",
                     interactive=False,
