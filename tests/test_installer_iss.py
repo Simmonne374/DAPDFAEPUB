@@ -37,7 +37,6 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER_ISS = PROJECT_ROOT / "build" / "installer.iss"
 
@@ -249,8 +248,8 @@ def test_registry_has_machine_hive_entries(registry_block: str) -> None:
     machine_check = [e for e in hklm_entries if "InstallUsesMachineHive" in e]
     assert len(hklm_entries) > 0, "[Registry] non ha voci HKLM"
     assert len(machine_check) == len(hklm_entries), (
-        "[Registry] ha {n_hklm} voci HKLM ma solo {n_check} sono condizionate "
-        "a InstallUsesMachineHive".format(n_hklm=len(hklm_entries), n_check=len(machine_check))
+        f"[Registry] ha {len(hklm_entries)} voci HKLM ma solo {len(machine_check)} sono condizionate "
+        "a InstallUsesMachineHive"
     )
 
 
@@ -261,8 +260,8 @@ def test_registry_has_user_hive_entries(registry_block: str) -> None:
     user_check = [e for e in hkcu_entries if "InstallUsesUserHive" in e]
     assert len(hkcu_entries) > 0, "[Registry] non ha voci HKCU"
     assert len(user_check) == len(hkcu_entries), (
-        "[Registry] ha {n_hkcu} voci HKCU ma solo {n_check} sono condizionate "
-        "a InstallUsesUserHive".format(n_hkcu=len(hkcu_entries), n_check=len(user_check))
+        f"[Registry] ha {len(hkcu_entries)} voci HKCU ma solo {len(user_check)} sono condizionate "
+        "a InstallUsesUserHive"
     )
 
 
@@ -279,10 +278,8 @@ def test_registry_hkcu_hklu_have_same_count(registry_block: str) -> None:
         if re.search(r"^Root:\s*HKCU;", e, re.MULTILINE | re.IGNORECASE)
     )
     assert hklm_count == hkcu_count, (
-        "[Registry] ha {n_hklm} voci HKLM ma {n_hkcu} voci HKCU: "
-        "dovrebbero essere speculari per simmetria uninstall".format(
-            n_hklm=hklm_count, n_hkcu=hkcu_count
-        )
+        f"[Registry] ha {hklm_count} voci HKLM ma {hkcu_count} voci HKCU: "
+        "dovrebbero essere speculari per simmetria uninstall"
     )
 
 
@@ -303,8 +300,8 @@ def test_registry_no_legacy_isadmin_check(registry_block: str) -> None:
     ]
     assert not legacy_block and not legacy_entries, (
         "[Registry] ha ancora riferimenti legacy a IsAdminInstall "
-        "(blocco: {n_block}, entry: {n_entry}): usare InstallUsesMachineHive "
-        "/ InstallUsesUserHive".format(n_block=len(legacy_block), n_entry=len(legacy_entries))
+        f"(blocco: {len(legacy_block)}, entry: {len(legacy_entries)}): usare InstallUsesMachineHive "
+        "/ InstallUsesUserHive"
     )
 
 
@@ -479,7 +476,7 @@ def test_output_base_filename_overridable(installer_text: str) -> None:
     )
     # Deve referenziare {#MyAppVersion} per restare consistente
     assert "{#MyAppVersion}" in m.group(1), (
-        "OutputBaseFilename default '{0}' non usa {{#MyAppVersion}}".format(m.group(1))
+        f"OutputBaseFilename default '{m.group(1)}' non usa {{#MyAppVersion}}"
     )
 
 

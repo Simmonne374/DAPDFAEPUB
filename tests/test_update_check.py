@@ -29,7 +29,6 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import update_check as uc
 
-
 # =====================================================================
 # parse_version
 # =====================================================================
@@ -210,7 +209,6 @@ def test_update_cache_survives_corrupt_json(cache_dir: Path) -> None:
 
 def _make_fake_response(payload: dict) -> object:
     """Costruisce un fake urllib response context manager."""
-    import io
     body = json.dumps(payload).encode("utf-8")
 
     class _Resp:
@@ -384,7 +382,8 @@ def test_check_for_update_falls_back_to_cached_on_error(monkeypatch: pytest.Monk
     )
     cache.save(cached)
     # Forza TTL scaduto
-    import os, time
+    import os
+    import time
     old = time.time() - 3600
     os.utime(cache.path, (old, old))
 
