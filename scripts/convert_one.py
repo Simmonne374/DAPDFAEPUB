@@ -71,7 +71,32 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                                  "cancella lo stato esistente e riparte da zero.")
     parser.add_argument("--verbose", "-v", action="store_true",
                             help="Log dettagliato (DEBUG)")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    # Issue #36: validazione esplicita dei range di --pages-per-batch e
+    # --dpi. Senza questi controlli, argparse accetta qualunque intero
+    # e i valori fuori range vengono gestiti piu avanti con effetti
+    # nascosti:
+    # * --pages-per-batch 1000 viene silenziosamente cappato a 20 da
+    #   Pipeline.__init__ (min(max_pages_per_batch, config.pages_per_batch))
+    #   e lutente non sa che il batch e stato ridotto.
+    # * --dpi 50 o --dpi 5000 viene passato a PyMuPDF e puo causare
+    #   OOM (matrice di rendering fuori scala) o crash senza messaggio.
+    # Vincoli scelti:
+    # * --pages-per-batch in [1, 30] - paper Unlimited-OCR: <=30 pagine/32K ctx.
+    # * --dpi in {150, 200, 250, 300, 400, 600} - set discreto di valori comuni.
+    if not 1 <= args.pages_per_batch <= 30:
+        parser.error(
+            f"--pages-per-batch deve essere in [1, 30]; "
+            f"ricevuto {args.pages_per_batch}"
+        )
+    if args.dpi not in (150, 200, 250, 300, 400, 600):
+        parser.error(
+            f"--dpi deve essere uno di [150, 200, 250, 300, 400, 600]; "
+            f"ricevuto {args.dpi}"
+        )
+
+    return args
 
 
 def _event_printer() -> callable:
