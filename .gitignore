@@ -66,5 +66,9 @@ huggingface/
 # Pipeline checkpoints (auto-generated accanto a ogni PDF)
 .relictoepub_checkpoints/
 
+# Windows absolute paths or accidental log directories
+C:/*
+[a-zA-Z]:/*
+
 # OS
 Thumbs.db
