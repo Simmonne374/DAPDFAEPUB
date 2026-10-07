@@ -328,9 +328,10 @@ class UnlimitedOCRRunner:
     @staticmethod
     def _strip_image_tokens(text: str) -> str:
         """Rimuove i token immagine tipici del multimodal prompt."""
-        # Alcuni wrapper aggiungono tag <image> ripetuti o placeholder
-        for token in ("<image>", "<|image|>", "<image_1>"):
-            text = text.replace(token, "")
+        # Bolt optimization: Fast-path substring check before running string replacements.
+        if "image" in text:
+            for token in ("<image>", "<|image|>", "<image_1>"):
+                text = text.replace(token, "")
         # Collassa righe vuote multiple in una sola
         lines = [ln.rstrip() for ln in text.splitlines()]
         cleaned: list[str] = []
