@@ -92,12 +92,16 @@ class BBox:
         """Parsa una stringa tipo "<|det|>label [x1, y1, x2, y2]<|/det|>" o "<|bbox|...>"."""
         # Bolt optimization: Fast-path substring branching and direct group extraction
         # avoids evaluating unnecessary regexes or generator comprehensions (~20-25% faster).
+        # B61: il fallback ``if ... if ...`` (NON ``elif``) preserva il
+        # comportamento storico: se il pattern DET non matcha, si tenta
+        # il pattern BBOX (es. OCR output con <|det|> malformato + <|bbox|>
+        # valido nello stesso testo).
         if "<|det|>" in raw:
             match = _DET_PATTERN.search(raw)
             if match:
                 lbl, x1, y1, x2, y2 = match.groups()
                 return cls(x_min=int(x1), y_min=int(y1), x_max=int(x2), y_max=int(y2), label=lbl.strip())
-        elif "<|bbox|" in raw:
+        if "<|bbox|" in raw:
             match = _BBOX_PATTERN.search(raw)
             if match:
                 g = match.groups()
