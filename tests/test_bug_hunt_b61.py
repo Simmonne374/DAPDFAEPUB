@@ -62,7 +62,6 @@ import pytest
 
 from relictoepub.postprocess.bbox_crop import BBox
 
-
 # ===============================================================
 # B61 — REPRODUCTION (failing test sul master)
 # ===============================================================
