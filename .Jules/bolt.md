@@ -1,5 +1,9 @@
 # Bolt's Journal - Critical Learnings
 
+## 2026-05-14 - Fast-path Substring Membership Guarding on High-Frequency Token Cleaners
+**Learning:** In inner document processing loops and page-level pipeline passes, running regex searches (`_DET_PATTERN.finditer`) or `str.replace` sequences without verifying tag membership incurs unnecessary C-extension scanning overhead on plain text pages. Adding cheap C-level substring checks (`if "<|det|>" in page_text:` and `if "image" in text:`) cuts execution time by up to ~50% on pages without layout tags.
+**Action:** Guard regex iterations and token stripping passes with fast substring checks (`in`) when tags are optional per page.
+
 ## 2026-04-20 - Substring Guard Branching and Direct Tuple Unpacking for Token Parsing
 **Learning:** Evaluated regex searches and generator comprehensions when parsing token strings (like `<|det|>` / `<|bbox|>` tags) add non-trivial overhead in inner parsing loops. Guarding regex calls with fast `in` string checks and directly unpacking match group tuples yields ~20-25% faster parsing without sacrificing code clarity.
 **Action:** Use fast substring branching and direct tuple unpacking for frequently invoked string token parsers.

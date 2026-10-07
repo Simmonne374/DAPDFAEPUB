@@ -703,7 +703,8 @@ class Pipeline:
                 # con l'immagine/figura/tabella che li precede immediatamente
                 # (modello Unlimited-OCR emette la caption come token separato
                 # subito dopo l'immagine -- issue #10).
-                det_matches = list(_DET_PATTERN.finditer(page_text))
+                # Bolt optimization: Fast-path substring guard avoids regex matching on pages without det tags.
+                det_matches = list(_DET_PATTERN.finditer(page_text)) if "<|det|>" in page_text else []
                 pieces: list[str] = []
                 cursor = 0
                 # Mappa label immagine -> prefisso caption atteso.

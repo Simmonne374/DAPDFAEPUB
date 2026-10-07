@@ -102,16 +102,23 @@ def clean_text(text: str, *, fix_hyphenation: bool = True, normalize_quotes: boo
     def _stash_code_block(match: re.Match[str]) -> str:
         code_blocks.append(match.group(0))
         return f"{_B39_PLACEHOLDER_PREFIX}{len(code_blocks) - 1}{_B39_PLACEHOLDER_SUFFIX}"
-    text = _FENCED_CODE_BLOCK.sub(_stash_code_block, text)
+
+    # Bolt optimization: Fast-path substring guards skip expensive regex matching
+    # when code block fences or horizontal rule characters are absent.
+    if "```" in text or "~~~" in text:
+        text = _FENCED_CODE_BLOCK.sub(_stash_code_block, text)
 
     # B39: proteggi anche le righe orizzontali markdown (``---``, ``***``,
     # ``___``). La regex ``_END_OF_LINE_HYPHEN`` mangerebbe l'ultimo ``-``
     # di ``---\n`` lasciando ``--`` (non più una regola orizzontale valida).
-    text = _HORIZONTAL_RULE.sub(_stash_code_block, text)
+    if "-" in text or "_" in text or "*" in text or "=" in text:
+        text = _HORIZONTAL_RULE.sub(_stash_code_block, text)
 
     if normalize_quotes:
-        text = _TYPOGRAPHIC_QUOTES.sub("'", text)
-        text = _TYPOGRAPHIC_QUOTES_DOUBLE.sub('"', text)
+        if "‘" in text or "’" in text or "´" in text:
+            text = _TYPOGRAPHIC_QUOTES.sub("'", text)
+        if "“" in text or "”" in text or "«" in text or "»" in text:
+            text = _TYPOGRAPHIC_QUOTES_DOUBLE.sub('"', text)
 
     if fix_hyphenation:
         # Caso 1: "parola-\ncont" → "parolacont" (sillabazione riunita)

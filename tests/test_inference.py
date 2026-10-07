@@ -52,3 +52,14 @@ def test_inference_config_to_dict_serializable() -> None:
     assert d["model_id"] == "baidu/Unlimited-OCR"
     assert d["quantization"] == "int4"
     assert d["pages_per_batch"] == 20
+
+
+def test_strip_image_tokens() -> None:
+    from relictoepub.inference.unlimited_ocr import UnlimitedOCRRunner
+
+    sample = "Header\n\n<image>text1<|image|>text2<image_1>\n\nFooter"
+    cleaned = UnlimitedOCRRunner._strip_image_tokens(sample)
+    assert "<image>" not in cleaned
+    assert "<|image|>" not in cleaned
+    assert "<image_1>" not in cleaned
+    assert "text1text2" in cleaned
