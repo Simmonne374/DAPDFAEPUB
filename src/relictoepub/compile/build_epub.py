@@ -16,6 +16,7 @@ Perché pypandoc + ebooklib invece di una soluzione all-in-one?
 
 from __future__ import annotations
 
+import html as _html
 import logging
 import re
 import shutil
@@ -278,7 +279,15 @@ def _chapter_xhtml(title: str, body_markdown: str, level: int) -> str:
     else:
         body_fragment = _convert_markdown_to_xhtml(body_markdown)
     # Testo del <title> EPUB: testo plain, fallback "Chapter" se vuoto.
-    title_text = _HTML_TAG_RE.sub("", title) if (title and "<" in title) else (title or "")
+    # B62: dopo lo strip dei tag, le entity HTML (``&amp;``, ``&lt;``, ``&gt;``)
+    # vanno decodificate PRIMA di essere ri-escape da ``_xml_escape``,
+    # altrimenti si ottiene un doppio escape (``&amp;amp;`` invece di
+    # ``&amp;``). ``_render_title_html`` produce infatti un frammento
+    # già HTML-escaped da pypandoc.
+    if title and "<" in title:
+        title_text = _html.unescape(_HTML_TAG_RE.sub("", title))
+    else:
+        title_text = _html.unescape(title) if title else ""
     title_text = title_text.strip() or "Chapter"
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -409,10 +418,13 @@ def _build_navigation_xhtml(title: str, chapters: list[ChapterInfo]) -> str:
         # B56: ``ch.title`` può essere testo plain oppure HTML pre-renderizzato
         # da pandoc (quando il titolo contiene Markdown). Il testo plain va
         # XML-escaped; l'HTML è già XHTML-safe.
+        # B62: ``ch.title`` può anche essere HTML-escaped senza tag (es.
+        # ``A &amp; B`` per un titolo "A & B"). In quel caso le entity vanno
+        # decodificate PRIMA dell'XML-escape per evitare il doppio escape.
         if ch.title.lstrip().startswith("<"):
             link_text = ch.title
         else:
-            link_text = _xml_escape(ch.title)
+            link_text = _xml_escape(_html.unescape(ch.title))
         items.append(
             f'      <li><a href="{ch.filename}">{link_text}</a></li>'
         )
