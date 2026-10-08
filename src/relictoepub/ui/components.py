@@ -179,6 +179,7 @@ def gallery_preview() -> gr.Gallery:
         rows=1,
         height=300,
         object_fit="contain",
+        interactive=False,
     )
 
 

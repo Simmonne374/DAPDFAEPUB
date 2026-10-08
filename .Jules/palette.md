@@ -16,3 +16,6 @@
 ## 2026-09-24 - Yielding gr.update vs gr.Button
 **Learning:** When dynamically modifying UI components during streaming/generator yields (such as showing loading text on a button), yielding a raw component instantiation like `gr.Button()` is unsafe. It replaces the component entirely, which can lead to unpredictable UI states and test breakages in Gradio. Gradio 5+ returns dicts for properties on component updates.
 **Action:** Always yield `gr.update(value=..., interactive=...)` to safely patch specific properties of an existing component rather than recreating it.
+## 2024-05-28 - Output-only Galleries should not be interactive
+**Learning:** By default, `gr.Gallery` is interactive, meaning it accepts file drops and uploads. When used strictly as an output display (e.g., showing a preview of rendered pages), this default behavior can confuse users into thinking they can or should upload images there.
+**Action:** Always set `interactive=False` on `gr.Gallery` components that are used solely for output/preview purposes to prevent misleading file drop zones.
