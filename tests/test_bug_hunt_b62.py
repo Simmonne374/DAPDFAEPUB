@@ -140,8 +140,8 @@ def test_b62_navigation_link_no_double_escape() -> None:
     entity escaped di pandoc, senza tag HTML).
     """
     from relictoepub.compile.build_epub import (
-        _build_navigation_xhtml,
         ChapterInfo,
+        _build_navigation_xhtml,
     )
 
     # Simuliamo ciò che accade con _render_title_html("A & B"):
@@ -171,8 +171,8 @@ def test_b62_navigation_link_no_double_escape() -> None:
 def test_b62_navigation_link_no_double_escape_for_lt() -> None:
     """B62 — REPRODUZIONE variante: TOC con ``<``."""
     from relictoepub.compile.build_epub import (
-        _build_navigation_xhtml,
         ChapterInfo,
+        _build_navigation_xhtml,
     )
 
     chapters = [
@@ -199,7 +199,7 @@ def test_b62_e2e_epub_chapter_titles_unescaped(tmp_path: Path) -> None:
     caratteri speciali NON deve presentare doppio escape né nel ``<title>``
     del capitolo né nella TOC (``nav.xhtml``).
     """
-    from relictoepub.compile.build_epub import build_epub, BookMetadata
+    from relictoepub.compile.build_epub import BookMetadata, build_epub
 
     md = (
         "# Intro & Overview\n\nTesto A.\n\n"
@@ -296,8 +296,8 @@ def test_b62_navigation_html_title_still_used_as_is() -> None:
     manipolazioni.
     """
     from relictoepub.compile.build_epub import (
-        _build_navigation_xhtml,
         ChapterInfo,
+        _build_navigation_xhtml,
     )
 
     chapters = [
