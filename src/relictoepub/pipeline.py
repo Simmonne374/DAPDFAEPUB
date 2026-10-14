@@ -636,11 +636,10 @@ class Pipeline:
 
                 # Avvolge i tag footer/page_number/header con testo in un div XHTML per conservarli ed impaginarli
                 # (B50: regex hoisted — compilato una sola volta, non per pagina)
-                page_text = _LAYOUT_TAG_RE.sub(wrap_layout_tags, page_text)
-
-                # Rimuoviamo eventuali tag residui vuoti di layout
-                # (B51: regex hoisted — compilato una sola volta, non per pagina)
-                page_text = _EMPTY_LAYOUT_RE.sub("", page_text)
+                # Bolt optimization: Fast-path substring check skips regex scans on pages without layout tags.
+                if "<|det|>" in page_text:
+                    page_text = _LAYOUT_TAG_RE.sub(wrap_layout_tags, page_text)
+                    page_text = _EMPTY_LAYOUT_RE.sub("", page_text)
 
                 img_counter = 0
                 page_num = page.page_num  # bind for closure (B023)
