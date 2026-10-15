@@ -19,3 +19,6 @@
 ## 2024-05-28 - Output-only Galleries should not be interactive
 **Learning:** By default, `gr.Gallery` is interactive, meaning it accepts file drops and uploads. When used strictly as an output display (e.g., showing a preview of rendered pages), this default behavior can confuse users into thinking they can or should upload images there.
 **Action:** Always set `interactive=False` on `gr.Gallery` components that are used solely for output/preview purposes to prevent misleading file drop zones.
+## 2024-05-19 - Confirmation Dialog for Destructive Actions
+**Learning:** Added a native browser confirmation dialog before deleting a checkpoint in Gradio. If the user clicks "Cancel", throwing an error prevents the Python backend function from executing. Also learned that when using `js` property in Gradio events, it's crucial to return the inputs if the execution should continue to the Python backend, otherwise the Python function receives wrong arguments.
+**Action:** Use `js="(x) => { if (!confirm('Are you sure?')) { throw new Error('Cancelled'); } return [x]; }"` for single-input events that require a confirmation dialog.

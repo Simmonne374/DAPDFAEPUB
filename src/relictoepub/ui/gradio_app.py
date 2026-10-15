@@ -453,6 +453,7 @@ def build_demo() -> gr.Blocks:
             fn=_clear_checkpoint,
             inputs=[pdf_input],
             outputs=[checkpoint_status],
+            js="(x) => { if (!confirm('Sei sicuro di voler eliminare il checkpoint? Questa operazione non può essere annullata.')) { throw new Error('Cancellazione annullata'); } return [x]; }",
         )
 
         # Wiring per il download del modello
