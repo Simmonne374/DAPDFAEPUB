@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     import signal
     _sigint_handled = False
 
-    def _sigint_handler(signum, frame):  # noqa: ARG001
+    def _sigint_handler(signum, frame):
         nonlocal _sigint_handled
         if _sigint_handled:
             # Secondo Ctrl+C → escalation, lascia propagare.
