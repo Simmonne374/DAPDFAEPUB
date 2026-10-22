@@ -139,7 +139,7 @@ def _run_pipeline(
 
     if pdf_path is None:
         gr.Warning("Nessun PDF selezionato.")
-        yield "❌ Nessun PDF selezionato.", gallery, None, gr.update(), None, gr.update(), gr.update()
+        yield "❌ Nessun PDF selezionato.", gallery, gr.update(value=None, visible=False), gr.update(), None, gr.update(), gr.update()
         return
 
     gr.Info("Avvio conversione del PDF, attendere prego...")
@@ -147,7 +147,7 @@ def _run_pipeline(
     if not pdf_path_obj.is_file():
         gr.Warning("File non valido.")
         yield (
-            f"❌ File non valido: {pdf_path}", gallery, None, gr.update(),
+            f"❌ File non valido: {pdf_path}", gallery, gr.update(value=None, visible=False), gr.update(),
             None, gr.update(), gr.update(),
         )
         return
@@ -230,7 +230,7 @@ def _run_pipeline(
                     gallery = [(str(t), None) for t in thumbs]
 
             yield (
-                log_to_show, gallery, None, gr.update(),
+                log_to_show, gallery, gr.update(value=None, visible=False), gr.update(),
                 pipeline, gr.update(value="⏹️ Interrompi conversione", interactive=True),
                 # BUG #11: disabilita run_btn durante l'esecuzione.
                 gr.update(interactive=False, value="⏳ Conversione in corso..."),
@@ -273,7 +273,7 @@ def _run_pipeline(
         base_log_text = (base_log_text + summary).strip()
         gr.Info("Conversione EPUB completata con successo!")
         yield (
-            base_log_text, gallery, str(final_dest_epub),
+            base_log_text, gallery, gr.update(value=str(final_dest_epub), visible=True),
             check_model_status()[1],
             None,  # pipeline_state → reset per prossima run
             gr.update(value="⏹️ Nessuna conversione attiva", interactive=False),
@@ -295,7 +295,7 @@ def _run_pipeline(
             pass
         gr.Warning("Conversione interrotta. Checkpoint salvato.")
         yield (
-            base_log_text, gallery, None,
+            base_log_text, gallery, gr.update(value=None, visible=False),
             gr.update(),
             None,  # reset pipeline_state
             gr.update(value="⏹️ Nessuna conversione attiva", interactive=False),
@@ -311,7 +311,7 @@ def _run_pipeline(
         err = f"\n❌ Errore: {exc}\n{traceback.format_exc()}"
         base_log_text = (base_log_text + err).strip()
         yield (
-            base_log_text, gallery, None,
+            base_log_text, gallery, gr.update(value=None, visible=False),
             gr.update(),
             None,
             gr.update(value="⏹️ Nessuna conversione attiva", interactive=False),

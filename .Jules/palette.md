@@ -19,3 +19,6 @@
 ## 2024-05-28 - Output-only Galleries should not be interactive
 **Learning:** By default, `gr.Gallery` is interactive, meaning it accepts file drops and uploads. When used strictly as an output display (e.g., showing a preview of rendered pages), this default behavior can confuse users into thinking they can or should upload images there.
 **Action:** Always set `interactive=False` on `gr.Gallery` components that are used solely for output/preview purposes to prevent misleading file drop zones.
+## 2026-10-05 - Hidden components and yields
+**Learning:** Components created with `visible=False` (like a download file placeholder) will not automatically become visible if you only yield a new value string or filepath to them. You must explicitly yield `gr.update(value=new_value, visible=True)` to make them appear. Likewise, yielding `None` does not hide a visible component; you must yield `gr.update(value=None, visible=False)`.
+**Action:** Always use `gr.update(value=..., visible=True/False)` when toggling component visibility during generator workflows, especially for download outputs.
