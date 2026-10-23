@@ -50,7 +50,6 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
 
 # --------------------------------------------------------------------------
 # Configurazione
@@ -120,14 +119,14 @@ class UpdateInfo:
             (utile per log diagnostici senza esporre stack trace).
     """
     current_version: str
-    latest_version: Optional[str] = None
+    latest_version: str | None = None
     update_available: bool = False
     is_prerelease: bool = False
     html_url: str = ""
     release_notes: str = ""
     assets: list = field(default_factory=list)
     checked_at: float = 0.0
-    error: Optional[str] = None
+    error: str | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -175,7 +174,7 @@ def parse_version(v: str) -> tuple:
     return (major, minor, patch, pre_rank, pre_num)
 
 
-def version_is_newer(latest: str, current: str) -> Optional[bool]:
+def version_is_newer(latest: str, current: str) -> bool | None:
     """Confronta due versioni.
 
     Ritorna True se latest > current, False se <=, None se non
@@ -207,7 +206,7 @@ class UpdateCache:
     ``os.replace`` e' atomico sulla stessa partizione.
     """
 
-    def __init__(self, path: Optional[Path] = None, ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS):
+    def __init__(self, path: Path | None = None, ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS):
         self.path = path or _cache_path()
         self.ttl_seconds = ttl_seconds
 
@@ -221,7 +220,7 @@ class UpdateCache:
         except OSError:
             return False
 
-    def load(self) -> Optional[UpdateInfo]:
+    def load(self) -> UpdateInfo | None:
         if not self.path.exists():
             return None
         try:
@@ -330,7 +329,7 @@ def check_for_update(
     current_version: str,
     *,
     repo: str = GITHUB_REPO,
-    cache: Optional[UpdateCache] = None,
+    cache: UpdateCache | None = None,
     force_refresh: bool = False,
     offline: bool = False,
 ) -> UpdateInfo:
@@ -451,7 +450,7 @@ def _print_human(info: UpdateInfo, fp) -> None:
     print(f"Versione locale:    {info.current_version}")
     print(f"Ultima release:     {info.latest_version or 'sconosciuta'}")
     if info.is_prerelease:
-        print(f"                   ⚠️  questa e' una PRERELEASE")
+        print("                   ⚠️  questa e' una PRERELEASE")
     if info.update_available:
         print()
         print(f"🆕  Aggiornamento disponibile! Vedi: {info.html_url}")

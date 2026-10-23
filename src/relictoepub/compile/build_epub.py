@@ -191,15 +191,17 @@ def _split_into_chapters(
     if not markdown.strip():
         return []
 
-    # 1) H1
-    h1_chapters = _split_on_pattern(markdown, _H1_PATTERN)
-    if h1_chapters:
-        return h1_chapters
+    # Bolt optimization: Fast-path substring check skips regex scans when heading tags are absent.
+    if "#" in markdown:
+        # 1) H1
+        h1_chapters = _split_on_pattern(markdown, _H1_PATTERN)
+        if h1_chapters:
+            return h1_chapters
 
-    # 2) H2
-    h2_chapters = _split_on_pattern(markdown, _H2_PATTERN)
-    if h2_chapters:
-        return h2_chapters
+        # 2) H2
+        h2_chapters = _split_on_pattern(markdown, _H2_PATTERN)
+        if h2_chapters:
+            return h2_chapters
 
     # 3) Page grouping
     if chapter_pages and chapter_pages > 0:
