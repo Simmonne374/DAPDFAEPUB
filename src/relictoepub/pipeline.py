@@ -82,6 +82,38 @@ _LAYOUT_TAG_RE = re.compile(
 _EMPTY_LAYOUT_RE = re.compile(
     r"<\|det\|>(?:footer|page_number|header)\[[^\]]+\]<\|/det\|>"
 )
+# B63: riferimenti a immagini generati dalla pipeline, sia nella forma HTML
+# (``<img src="images/x.png">``) sia nella forma Markdown (``![](images/x.png)``).
+_IMG_REF_RE = re.compile(
+    r"""\bsrc=["']images/(?P<attr>[^"']+)["']|\]\(\s*images/(?P<md>[^"'()\s]+)""",
+    re.IGNORECASE,
+)
+
+
+def _rehydrate_crops_from_markdown(
+    markdown: str, crops_dir: Path, saved_crops: list[Path]
+) -> None:
+    """(B63) Ricolloca in ``saved_crops`` i crop già su disco referenziati da
+    ``markdown``.
+
+    Il ramo "batch cached" salta l'estrazione bbox/crop, ma il markdown
+    memorizzato nel checkpoint contiene già i ``<img src="images/...">``.
+    Senza questo re-hook, un resume produrrebbe un EPUB con riferimenti a
+    immagini mai copiate in ``OEBPS/images/``.
+
+    I crop su disco sono sempre ``.png`` (``out_path`` è hardcoded), mentre il
+    riferimento nel markdown è ``.webp`` quando l'ottimizzazione e-ink è
+    attiva: per questo il fallback prova ``<stem>.png``.
+    """
+    for match in _IMG_REF_RE.finditer(markdown):
+        name = match.group("attr") or match.group("md")
+        if not name:
+            continue
+        candidate = crops_dir / name
+        if not candidate.exists():
+            candidate = crops_dir / (Path(name).stem + ".png")
+        if candidate.exists() and candidate not in saved_crops:
+            saved_crops.append(candidate)
 
 
 @dataclass
@@ -465,8 +497,20 @@ class Pipeline:
         all_markdown_parts: list[str] = []
         all_pages_processed = 0
 
-        crops_dir = ingest_result.output_dir / "crops"
-        crops_dir.mkdir(exist_ok=True)
+        # B63: i crop non sono un artefatto intermedio -- sono parte del
+        # risultato, perché il markdown di ogni batch li referenzia come
+        # ``<img src="images/<nome>">``. Devono dunque sopravvivere al run:
+        # con ``work_dir=None`` la work dir è una ``tempfile.mkdtemp()``
+        # nuova a ogni esecuzione, quindi un resume che riusa il markdown
+        # cached produrrebbe un EPUB con <img> che puntano a file inesistenti.
+        # Quando il checkpoint è attivo li scriviamo quindi accanto allo
+        # stato, così il run successivo può riagganciarli; cancellare la
+        # cartella di checkpoint continua a ripulire anche i crop.
+        if self.checkpoint_store is not None:
+            crops_dir = self.checkpoint_store.directory / "crops"
+        else:
+            crops_dir = ingest_result.output_dir / "crops"
+        crops_dir.mkdir(parents=True, exist_ok=True)
         saved_crops: list[Path] = []
 
         # Setup iniziale checkpoint state
@@ -522,6 +566,13 @@ class Pipeline:
                 # Se il cached è un singolo chunk (no pagebreak), inseriscilo come 1 page
                 if len(cached_parts) == 1:
                     cached_parts = [cached_parts[0]]
+                # B63: i crop di questo batch non vengono rigenerati (niente
+                # OCR ⇒ niente bbox), ma il markdown cached li referenzia
+                # già: li rimettiamo in ``saved_crops`` per evitare <img>
+                # pendenti nell'EPUB finale.
+                _rehydrate_crops_from_markdown(
+                    cached_markdown, crops_dir, saved_crops,
+                )
                 all_markdown_parts.extend(cached_parts)
                 all_pages_processed += batch_end - batch_start
                 yield ProgressEvent(
