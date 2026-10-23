@@ -120,9 +120,11 @@ def clean_text(text: str, *, fix_hyphenation: bool = True, normalize_quotes: boo
         if "“" in text or "”" in text or "«" in text or "»" in text:
             text = _TYPOGRAPHIC_QUOTES_DOUBLE.sub('"', text)
 
-    if fix_hyphenation:
+    if fix_hyphenation and "\n" in text:
         # Caso 1: "parola-\ncont" → "parolacont" (sillabazione riunita)
-        text = _END_OF_LINE_HYPHEN.sub("", text)
+        # Bolt optimization: Fast-path check skips regex scan if hyphen characters are absent.
+        if "-" in text or "\u00AD" in text:
+            text = _END_OF_LINE_HYPHEN.sub("", text)
         # Caso 2: "parola \n cont" su righe molto corte → mantengo il
         # newline come singolo spazio, pypandoc gestirà la spaziatura
         text = _INLINE_NEWLINE.sub(" ", text)
@@ -137,9 +139,12 @@ def clean_text(text: str, *, fix_hyphenation: bool = True, normalize_quotes: boo
         text = _CLEAN_BBOX.sub("", text)
 
     # Collassa 3+ newline in 2 (per separare i paragrafi in Markdown)
-    text = _MULTI_NEWLINE.sub("\n\n", text)
+    # Bolt optimization: Fast-path substring guard skips regex scans when triple newlines are absent.
+    if "\n\n\n" in text:
+        text = _MULTI_NEWLINE.sub("\n\n", text)
     # Rimuovi spazi trailing prima di newline
-    text = _TRAILING_WHITESPACE.sub("\n", text)
+    if " \n" in text or "\t\n" in text:
+        text = _TRAILING_WHITESPACE.sub("\n", text)
 
     # B39: ripristina i blocchi di codice protetti (dopo tutti gli altri
     # collassi, così i newline circostanti sono già normalizzati).
