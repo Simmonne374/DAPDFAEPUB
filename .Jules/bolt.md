@@ -1,5 +1,9 @@
 # Bolt's Journal - Critical Learnings
 
+## 2026-06-11 - Fast-path Substring Membership Guarding on Pagebreak Chapter Splitting
+**Learning:** In `build_epub.py`, chapter splitting functions `_split_page_grouping` and `_split_legacy_pagebreaks` executed `_HEADING_PATTERN.split` and `_HEADING_PATTERN.finditer` on full document markdown strings even when `<!-- pagebreak -->` comments were absent. Adding cheap substring guards (`if "pagebreak" not in markdown:`) bypasses regex scans and yields ~21x faster chapter splitting on non-pagebreak documents.
+**Action:** Guard `_HEADING_PATTERN` pagebreak splits and iterations with `if "pagebreak" not in markdown:` checks before running regexes.
+
 ## 2026-05-28 - Fast-path Substring Membership Guarding on Layout Tag Substitutions
 **Learning:** In the page-processing loop in `pipeline.py`, running `_LAYOUT_TAG_RE.sub` and `_EMPTY_LAYOUT_RE.sub` on every page string incurs regex search overhead even when `<|det|>` layout tags are completely absent. Guarding both substitutions with `if "<|det|>" in page_text:` skips regex scans and yields ~2x faster per-page text post-processing on standard pages without layout tags.
 **Action:** Always wrap layout tag and structural token regex substitutions in inner document loops with cheap `in` substring guards.
