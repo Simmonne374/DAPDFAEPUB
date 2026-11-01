@@ -191,7 +191,10 @@ def _split_into_chapters(
     if not markdown.strip():
         return []
 
-    # Bolt optimization: Fast-path substring check skips regex scans when heading tags are absent.
+    # Bolt optimization: fast-path when there are no headings and no
+    # pagebreak markers: the whole markdown is a single logical chapter.
+    # Keep the H1/H2 path first so page-grouping and legacy pagebreak logic
+    # remain semantically correct for real book structures.
     if "#" in markdown:
         # 1) H1
         h1_chapters = _split_on_pattern(markdown, _H1_PATTERN)
@@ -202,6 +205,9 @@ def _split_into_chapters(
         h2_chapters = _split_on_pattern(markdown, _H2_PATTERN)
         if h2_chapters:
             return h2_chapters
+
+    if "pagebreak" not in markdown:
+        return [{"level": 1, "title": "", "body": markdown.strip()}]
 
     # 3) Page grouping
     if chapter_pages and chapter_pages > 0:

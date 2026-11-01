@@ -50,6 +50,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import tempfile
 import threading
 from dataclasses import asdict, dataclass, field
@@ -204,10 +205,10 @@ class CheckpointStore:
                 raise
 
     def clear(self) -> None:
-        """Rimuove il checkpoint. Idempotente."""
+        """Rimuove il checkpoint e i relativi artefatti persistenti. Idempotente."""
         with self._lock:
-            if self._path.is_file():
-                self._path.unlink()
+            if self.directory.exists():
+                shutil.rmtree(self.directory)
 
 
 def compute_pdf_sha256(pdf_path: Path, *, chunk_size: int = 1 << 20) -> str:

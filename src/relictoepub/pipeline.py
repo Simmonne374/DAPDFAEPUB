@@ -82,8 +82,33 @@ _LAYOUT_TAG_RE = re.compile(
 _EMPTY_LAYOUT_RE = re.compile(
     r"<\|det\|>(?:footer|page_number|header)\[[^\]]+\]<\|/det\|>"
 )
+# B63: i crop persistono in checkpoint e sono referenziati dal markdown
+# sia come HTML (``<img src="images/...">``) sia come Markdown
+# (``![alt](images/...)``). Riagganciarli al resume evita EPUB con
+# immagini pendenti quando il batch è già stato completato.
+_IMG_REF_RE = re.compile(
+    r"""\bsrc=["']images/(?P<attr>[^"']+)['"]|\]\(\s*images/(?P<md>[^"'()\s]+)""",
+    re.IGNORECASE,
+)
 _REF_TAG_RE = re.compile(r"<\|ref\|>.*?<\|/ref\|>", re.DOTALL)
 _PAGE_SPLIT_RE = re.compile(r"<page>", re.IGNORECASE)
+
+
+def _rehydrate_crops_from_markdown(
+    markdown: str, crops_dir: Path, saved_crops: list[Path]
+) -> None:
+    """Rimette in ``saved_crops`` i crop già presenti sul disco e referenziati dal markdown."""
+    for match in _IMG_REF_RE.finditer(markdown):
+        name = match.group("attr") or match.group("md")
+        if not name:
+            continue
+        candidate = crops_dir / name
+        if not candidate.exists():
+            fallback = crops_dir / (Path(name).stem + ".png")
+            if fallback.exists():
+                candidate = fallback
+        if candidate.exists() and candidate not in saved_crops:
+            saved_crops.append(candidate)
 
 
 def _wrap_layout_tags(match: re.Match[str]) -> str:
@@ -473,8 +498,11 @@ class Pipeline:
         all_markdown_parts: list[str] = []
         all_pages_processed = 0
 
-        crops_dir = ingest_result.output_dir / "crops"
-        crops_dir.mkdir(exist_ok=True)
+        if self.checkpoint_store is not None:
+            crops_dir = self.checkpoint_store.directory / "crops"
+        else:
+            crops_dir = ingest_result.output_dir / "crops"
+        crops_dir.mkdir(parents=True, exist_ok=True)
         saved_crops: list[Path] = []
 
         # Setup iniziale checkpoint state
@@ -530,6 +558,7 @@ class Pipeline:
                 # Se il cached è un singolo chunk (no pagebreak), inseriscilo come 1 page
                 if len(cached_parts) == 1:
                     cached_parts = [cached_parts[0]]
+                _rehydrate_crops_from_markdown(cached_markdown, crops_dir, saved_crops)
                 all_markdown_parts.extend(cached_parts)
                 all_pages_processed += batch_end - batch_start
                 yield ProgressEvent(
