@@ -183,12 +183,12 @@ def gallery_preview() -> gr.Gallery:
     )
 
 
-def epub_download(value: str | None = None) -> gr.File:
+def epub_download(value: str | None = None) -> gr.DownloadButton:
     """Componente per il download dell'EPUB finale."""
-    return gr.File(
+    return gr.DownloadButton(
         label="📥 Download EPUB",
         value=value,
-        interactive=False,
+        interactive=True,
         visible=value is not None,
     )
 

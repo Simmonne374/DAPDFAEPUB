@@ -26,3 +26,6 @@
 ## 2024-05-19 - Confirmation Dialog for Destructive Actions
 **Learning:** Added a native browser confirmation dialog before deleting a checkpoint in Gradio. If the user clicks "Cancel", throwing an error prevents the Python backend function from executing. Also learned that when using `js` property in Gradio events, it's crucial to return the inputs if the execution should continue to the Python backend, otherwise the Python function receives wrong arguments.
 **Action:** Use `js="(x) => { if (!confirm('Are you sure?')) { throw new Error('Cancelled'); } return [x]; }"` for single-input events that require a confirmation dialog.
+## 2024-05-29 - Download components for single files
+**Learning:** Using `gr.File` for single file downloads can be less intuitive than a dedicated button. `gr.DownloadButton` serves as a seamless drop-in replacement that accepts the same `value` and `visible` kwargs, providing a clearer, standard call-to-action for users wanting to download a single file.
+**Action:** Use `gr.DownloadButton` instead of `gr.File` for single file downloads to improve the intuitiveness of the interface.
